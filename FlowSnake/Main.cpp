@@ -3,24 +3,22 @@
 #include <gl\GL.h>
 #include <stdio.h> // Needed for debugging. Can disable for Release
 
-// Defined in stdlib, but define here to avoid the header cost
-#define countof(x) (sizeof(x)/sizeof(x[0]))
+/********** Defines *******************************/
+#define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
 #define IFC(x) if (FAILED(hr = x)) { goto Cleanup; }
 
+/********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void Error(const wchar_t* pStr, ...);
 
-void Error(const wchar_t* pStr, ...)
-{
-    wchar_t msg[1024] = {0};
-	va_list args;
-	va_start(args, pStr);
-    _vsnwprintf_s(msg, countof(msg), _TRUNCATE, pStr, args);
-    OutputDebugStringW(msg);
-}
+/********** Globals *******************************/
 
 HRESULT Update(UINT deltaTime)
 {
-    glClear(GL_COLOR_BUFFER_BIT);
+	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+
 	return S_OK;
 }
 
@@ -42,7 +40,7 @@ HRESULT InitWindow(HWND& hWnd, int width, int height)
 	wndClass.cbWndExtra = 0;
 	wndClass.hInstance = GetModuleHandle(0);
 	wndClass.hIcon = NULL;
-	wndClass.hCursor = NULL;
+	wndClass.hCursor = LoadCursor(0, IDC_ARROW);
 	wndClass.hbrBackground = NULL;
 	wndClass.lpszMenuName = NULL;
 	wndClass.lpszClassName = wndName;
@@ -78,6 +76,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 	HWND hWnd = NULL;
 	HDC hDC = NULL;
 	HGLRC hRC = NULL;
+	MSG msg = {};
 	PIXELFORMATDESCRIPTOR pfd;
 	
     LARGE_INTEGER previousTime;
@@ -107,12 +106,11 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
     // -------------------
     // Start the Game Loop
     // -------------------
-	MSG msg = {};
     while (msg.message != WM_QUIT)
     {
         if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
         {
-            TranslateMessage(&msg);
+            TranslateMessage(&msg); 
             DispatchMessage(&msg);
         }
         else
@@ -131,7 +129,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
             SwapBuffers(hDC);
             if (glGetError() != GL_NO_ERROR)
             {
-                //ERROR("OpenGL error.\n");
+                Error(L"OpenGL error.\n");
             }
         }
     }
@@ -162,4 +160,13 @@ LRESULT WINAPI MsgHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+void Error(const wchar_t* pStr, ...)
+{
+    wchar_t msg[1024] = {0};
+	va_list args;
+	va_start(args, pStr);
+    _vsnwprintf_s(msg, countof(msg), _TRUNCATE, pStr, args);
+    OutputDebugStringW(msg);
 }
