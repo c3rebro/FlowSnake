@@ -1,0 +1,11 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/Release
+/Debug
+*.opensdf
+*.sdf
+*.suo
+/FlowSnake/Release
+/FlowSnake/Debug
