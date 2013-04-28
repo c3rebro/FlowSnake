@@ -1,8 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <GL\GL.h>
-#include "glext.h"
+#include <math.h>  // sqrt
 #include <stdio.h> // _vsnwprintf_s. Can disable for Release
+#include "glext.h" // glGenBuffers, glBindBuffers, ...
+
 
 /********** Defines *******************************/
 #define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
@@ -44,12 +46,30 @@ struct float2
 {
 	float x;
 	float y;
+
+	float2 operator- (float2 a)
+	{
+		float2 ret = {x - a.x, y - a.y};
+		return ret;
+	}
+
+	float2 operator/ (float a)
+	{
+		float2 ret = {x/a, y/a};
+		return ret;
+	}
+	
+	float2 operator* (float a)
+	{
+		float2 ret = {x*a, y*a};
+		return ret;
+	}
 };
 
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
 
-/********** Globals *******************************/
+/********** Globals Variables *********************/
 // Use SOA instead of AOS from optimal cache usage
 // We'll traverse each array linearly in each stage of the algorithm
 float2 g_positions[g_numVerts];
@@ -58,24 +78,46 @@ short  g_neighbors[g_numVerts];
 // May not need this if velocity is only a function of neighbor distance
 float2 g_velocities[g_numVerts]; 
 
+GLuint g_vboPos;
+
+/**************************************************/
+
 HRESULT Update(uint deltaTime)
 {
 	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	// Determine nearest neighbors
+	g_neighbors[0] = g_numVerts-1;
+	for (uint i = 1; i < g_numVerts; i++)
+	{
+		g_neighbors[i] = i-1;
+	}
 
 	// Determine velocities
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		float2 dir = g_positions[g_neighbors[i]] - g_positions[i];
+		float2 dir = dir / sqrt(dir.x*dir.x + dir.y*dir.y);
+		float speed = 0.1;
+		g_velocities[i] = dir * speed;
+	}
 
 	// Determine positions
-
-	// Draw
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		g_positions[i].x += g_velocities[i].x * deltaTime/1000000.0f;
+		g_positions[i].y += g_velocities[i].y * deltaTime/1000000.0f;
+	}
 
 	return S_OK;
 }
 
 HRESULT Render()
 {
+	glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_positions), g_positions, GL_STREAM_DRAW); 
+
 	glDrawArrays(GL_POINTS, 0, g_numVerts);
 	return S_OK;
 }
@@ -183,12 +225,11 @@ HRESULT Init()
 
 	// Initialize buffers
 	const uint positionSlot = 0;
-    GLuint positions;
     GLsizei stride = sizeof(g_positions[0]);
 	GLsizei totalSize = stride * countof(g_positions);
-    glGenBuffers(1, &positions);
-    glBindBuffer(GL_ARRAY_BUFFER, positions);
-    glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STATIC_DRAW);
+    glGenBuffers(1, &g_vboPos);
+    glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
+    glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
     glEnableVertexAttribArray(positionSlot);
     glVertexAttribPointer(positionSlot, 2, GL_FLOAT, GL_FALSE, stride, 0);
 
@@ -312,7 +353,7 @@ Cleanup:
     //UnregisterClassA(szName, wc.hInstance);
 
 	char strBuf[256];
-	sprintf(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime/1000.0f); 
+	sprintf_s(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime/1000.0f); 
 	OutputDebugString(strBuf);
 
     return 0;
