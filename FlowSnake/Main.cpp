@@ -8,7 +8,7 @@
 #define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
 #define IFC(x) if (FAILED(hr = x)) { goto Cleanup; }
 #ifdef _DEBUG
-#	define ASSERT(x) if (!(x)) { OutputDebugString("Assert Failed!"); DebugBreak(); }
+#	define ASSERT(x) if (!(x)) { OutputDebugString("Assert Failed!\n"); DebugBreak(); }
 #else
 #	define ASSERT(x)
 #endif
@@ -250,6 +250,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 	
     LARGE_INTEGER previousTime;
     LARGE_INTEGER freqTime;
+	double aveDeltaTime = 0.0;
 
 	IFC( InitWindow(hWnd, 1024, 768) );
     hDC = GetDC(hWnd);
@@ -293,6 +294,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
             QueryPerformanceCounter(&currentTime);
             elapsed = currentTime.QuadPart - previousTime.QuadPart;
             deltaTime = elapsed * 1000000.0 / freqTime.QuadPart;
+			aveDeltaTime = aveDeltaTime * 0.9 + 0.1 * deltaTime;
             previousTime = currentTime;
 
             Update((uint) deltaTime);
@@ -308,6 +310,10 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 Cleanup:
 	if(hRC) wglDeleteContext(hRC);
     //UnregisterClassA(szName, wc.hInstance);
+
+	char strBuf[256];
+	sprintf(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime/1000.0f); 
+	OutputDebugString(strBuf);
 
     return 0;
 }
