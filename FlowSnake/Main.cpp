@@ -1,23 +1,50 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <gl\GL.h>
-#include <stdio.h> // Needed for debugging. Can disable for Release
+#include <stdio.h> // _vsnwprintf_s. Can disable for Release
 
 /********** Defines *******************************/
 #define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
 #define IFC(x) if (FAILED(hr = x)) { goto Cleanup; }
 
+#define uint UINT
+
 /********** Function Declarations *****************/
-LRESULT WINAPI MsgHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
 void Error(const wchar_t* pStr, ...);
+float rand();
+
+/********** Structure Definitions******************/
+struct float2
+{
+	float x;
+	float y;
+};
+
+/********** Global Constants***********************/
+const uint g_numVerts = 16000;
 
 /********** Globals *******************************/
+// Use SOA instead of AOS from optimal cache usage
+// We'll traverse each array linearly in each stage of the algorithm
+float2 g_positions[g_numVerts];
+short  g_neighbors[g_numVerts];
 
-HRESULT Update(UINT deltaTime)
+// May not need this if velocity is only a function of neighbor distance
+float2 g_velocities[g_numVerts]; 
+
+HRESULT Update(uint deltaTime)
 {
 	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
+	// Determine nearest neighbors
+
+	// Determine velocities
+
+	// Determine positions
+
+	// Draw
 
 	return S_OK;
 }
@@ -25,6 +52,20 @@ HRESULT Update(UINT deltaTime)
 HRESULT Render()
 {
 	return S_OK;
+}
+
+HRESULT Init()
+{
+	HRESULT hr = S_OK;
+
+	// Calculate random starting positions
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		g_positions[i].x = rand();
+		g_positions[i].y = rand();
+	}
+
+	return hr;
 }
 
 HRESULT InitWindow(HWND& hWnd, int width, int height)
@@ -100,6 +141,8 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 	hRC = wglCreateContext(hDC);
     wglMakeCurrent(hDC, hRC);
 
+	IFC( Init() );
+
     QueryPerformanceFrequency(&freqTime);
     QueryPerformanceCounter(&previousTime);
 	
@@ -124,7 +167,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
             deltaTime = elapsed * 1000000.0 / freqTime.QuadPart;
             previousTime = currentTime;
 
-            Update((UINT) deltaTime);
+            Update((uint) deltaTime);
 			Render();
             SwapBuffers(hDC);
             if (glGetError() != GL_NO_ERROR)
@@ -141,7 +184,7 @@ Cleanup:
     return 0;
 }
 
-LRESULT WINAPI MsgHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
@@ -169,4 +212,13 @@ void Error(const wchar_t* pStr, ...)
 	va_start(args, pStr);
     _vsnwprintf_s(msg, countof(msg), _TRUNCATE, pStr, args);
     OutputDebugStringW(msg);
+}
+
+float rand()
+{
+	#define RAND_MAX 32767.0f
+	static uint seed = 123456789;
+
+	seed = (214013*seed+2531011); 
+	return float(((seed>>16)&0x7FFF)/RAND_MAX); 
 }
