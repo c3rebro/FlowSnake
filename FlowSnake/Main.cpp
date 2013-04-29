@@ -8,10 +8,11 @@
 
 /********** Defines *******************************/
 #define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
-#define IFC(x) if (FAILED(hr = x)) { goto Cleanup; }
 #ifdef _DEBUG
+#	define IFC(x) if (FAILED(hr = x)) { char buf[256]; sprintf_s(buf, "IFC Failed at Line %u\n", __LINE__); OutputDebugString(buf); goto Cleanup; }
 #	define ASSERT(x) if (!(x)) { OutputDebugString("Assert Failed!\n"); DebugBreak(); }
 #else
+#	define IFC(x) if (FAILED(hr = x)) { goto Cleanup; }
 #	define ASSERT(x)
 #endif
 
@@ -47,6 +48,14 @@ struct float2
 	float x;
 	float y;
 
+	float getLength()
+	{
+		if (x == 0 && y == 0)
+			return 0;
+		else
+			return sqrt(x*x + y*y);
+	}
+
 	float2 operator- (float2 a)
 	{
 		float2 ret = {x - a.x, y - a.y};
@@ -66,51 +75,131 @@ struct float2
 	}
 };
 
+// TODO: this can be packed into one short
+struct Node
+{
+	bool hasParent;
+	bool hasChild;
+	short target;
+	short tail;
+	float2 velocity;
+};
+
 /********** Global Constants***********************/
-const uint g_numVerts = 16000;
+const uint g_numVerts = 20;
+const float g_tailDist = 0.01f;
+const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
 // Use SOA instead of AOS from optimal cache usage
 // We'll traverse each array linearly in each stage of the algorithm
-float2 g_positions[g_numVerts];
-short  g_neighbors[g_numVerts];
-
-// May not need this if velocity is only a function of neighbor distance
-float2 g_velocities[g_numVerts]; 
+float2 g_positions[g_numVerts] = {};
+Node   g_nodes[g_numVerts] = {};
 
 GLuint g_vboPos;
 
 /**************************************************/
 
+inline bool IsValidTarget(Node& target, Node& current)
+{
+	bool validTarget = 
+		 (target.hasChild == false) &&			// It can't already have a child 
+		 (target.tail != current.tail);	// It can't be part of ourself
+
+	return validTarget;
+}
+
+HRESULT FindNearestNeighbors()
+{
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		Node& n = g_nodes[i];
+
+		if (n.hasParent == false) // Find the nearest potential parent
+		{
+			short nearest = -1;
+			float minDist = 1.0f;
+
+			for (uint j = 0; j < g_numVerts; j++)
+			{
+				Node& target = g_nodes[j];
+
+				if (IsValidTarget(target, n))
+				{
+					float dist = (g_positions[j] - g_positions[i]).getLength();
+					if (dist < minDist)
+					{
+						minDist = dist;
+						nearest = j;
+					}
+				}
+			}
+
+			if (nearest == -1)
+				return E_FAIL; // no valid targets found
+
+			g_nodes[i].target = nearest;
+		}
+	}
+
+	return S_OK;
+}
+
+HRESULT Chomp(short chomperIndex)
+{
+	Node& chomper = g_nodes[chomperIndex];
+	Node& tail = g_nodes[chomper.target];
+
+	chomper.hasParent = true;
+	tail.hasChild = true;
+	tail.tail = chomper.tail;
+
+	// Update the whole chain's tail
+	Node* pTarget = &tail;
+	while (pTarget->hasParent)
+	{
+		pTarget = &g_nodes[pTarget->target];
+		pTarget->tail = chomper.tail;
+	}
+
+	return S_OK;
+}
+
 HRESULT Update(uint deltaTime)
 {
+	HRESULT hr = S_OK;
 	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	// Determine nearest neighbors
-	g_neighbors[0] = g_numVerts-1;
-	for (uint i = 1; i < g_numVerts; i++)
-	{
-		g_neighbors[i] = i-1;
-	}
+	IFC( FindNearestNeighbors() );
 
-	// Determine velocities
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		float2 dir = g_positions[g_neighbors[i]] - g_positions[i];
-		float2 dir = dir / sqrt(dir.x*dir.x + dir.y*dir.y);
-		float speed = 0.1;
-		g_velocities[i] = dir * speed;
+		Node& currentNode = g_nodes[i];
+		Node& targetNode = g_nodes[currentNode.target];
+
+		// Determine velocity
+		float2 targetVector = g_positions[currentNode.target] - g_positions[i];
+		float  targetDist = targetVector.getLength();
+		float2 targetDir = targetVector / targetDist;
+		currentNode.velocity = targetDir * g_speed;
+
+		// Check for chomps
+		if (targetDist <= g_tailDist && IsValidTarget(targetNode, currentNode))
+		{
+			Chomp(i);
+		}
 	}
 
 	// Determine positions
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		g_positions[i].x += g_velocities[i].x * deltaTime/1000000.0f;
-		g_positions[i].y += g_velocities[i].y * deltaTime/1000000.0f;
+		g_positions[i].x += g_nodes[i].velocity.x * deltaTime/1000000.0f;
+		g_positions[i].y += g_nodes[i].velocity.y * deltaTime/1000000.0f;
 	}
 
-	return S_OK;
+Cleanup:
+	return hr;
 }
 
 HRESULT Render()
@@ -221,6 +310,17 @@ HRESULT Init()
 	{
 		g_positions[i].x = rand();
 		g_positions[i].y = rand();
+	}
+
+	// Initilialize our node list
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		Node& n = g_nodes[i];
+		n.hasChild = false;
+		n.hasParent = false;
+
+		// Every node is its own tail initially
+		n.tail = i;
 	}
 
 	// Initialize buffers
@@ -338,7 +438,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 			aveDeltaTime = aveDeltaTime * 0.9 + 0.1 * deltaTime;
             previousTime = currentTime;
 
-            Update((uint) deltaTime);
+            IFC( Update((uint) deltaTime) );
 			Render();
             SwapBuffers(hDC);
             if (glGetError() != GL_NO_ERROR)
@@ -356,7 +456,7 @@ Cleanup:
 	sprintf_s(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime/1000.0f); 
 	OutputDebugString(strBuf);
 
-    return 0;
+    return FAILED(hr);
 }
 
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
