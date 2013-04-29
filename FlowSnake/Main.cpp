@@ -62,6 +62,12 @@ struct float2
 		return ret;
 	}
 
+	float2 operator+ (float2 a)
+	{
+		float2 ret = {x + a.x, y + a.y};
+		return ret;
+	}
+
 	float2 operator/ (float a)
 	{
 		float2 ret = {x/a, y/a};
@@ -80,9 +86,7 @@ struct Node
 {
 	bool hasParent;
 	bool hasChild;
-	short target;
 	short tail;
-	float2 velocity;
 };
 
 /********** Global Constants***********************/
@@ -94,6 +98,8 @@ const float g_speed = 0.1f; // in Screens per second
 // Use SOA instead of AOS from optimal cache usage
 // We'll traverse each array linearly in each stage of the algorithm
 float2 g_positions[g_numVerts] = {};
+float2 g_vectors[g_numVerts] = {}; // vectors from a node to its target
+short  g_targets[g_numVerts] = {};
 Node   g_nodes[g_numVerts] = {};
 
 GLuint g_vboPos;
@@ -103,43 +109,40 @@ GLuint g_vboPos;
 inline bool IsValidTarget(Node& target, Node& current)
 {
 	bool validTarget = 
-		 (target.hasChild == false) &&			// It can't already have a child 
+		 (target.hasChild == false) &&	// It can't already have a child 
 		 (target.tail != current.tail);	// It can't be part of ourself
 
 	return validTarget;
 }
 
-HRESULT FindNearestNeighbors()
+HRESULT FindNearestNeighbor(short i)
 {
-	for (uint i = 0; i < g_numVerts; i++)
+	Node& n = g_nodes[i];
+
+	if (n.hasParent == false) // Find the nearest potential parent
 	{
-		Node& n = g_nodes[i];
+		short nearest = -1;
+		float minDist = 1.0f;
 
-		if (n.hasParent == false) // Find the nearest potential parent
+		for (uint j = 0; j < g_numVerts; j++)
 		{
-			short nearest = -1;
-			float minDist = 1.0f;
+			Node& target = g_nodes[j];
 
-			for (uint j = 0; j < g_numVerts; j++)
+			if (IsValidTarget(target, n))
 			{
-				Node& target = g_nodes[j];
-
-				if (IsValidTarget(target, n))
+				float dist = (g_positions[j] - g_positions[i]).getLength();
+				if (dist < minDist)
 				{
-					float dist = (g_positions[j] - g_positions[i]).getLength();
-					if (dist < minDist)
-					{
-						minDist = dist;
-						nearest = j;
-					}
+					minDist = dist;
+					nearest = j;
 				}
 			}
-
-			if (nearest == -1)
-				return E_FAIL; // no valid targets found
-
-			g_nodes[i].target = nearest;
 		}
+
+		if (nearest == -1)
+			return E_FAIL; // no valid targets found
+
+		g_targets[i] = nearest;
 	}
 
 	return S_OK;
@@ -148,18 +151,23 @@ HRESULT FindNearestNeighbors()
 HRESULT Chomp(short chomperIndex)
 {
 	Node& chomper = g_nodes[chomperIndex];
-	Node& tail = g_nodes[chomper.target];
+	Node& tail = g_nodes[g_targets[chomperIndex]];
 
-	chomper.hasParent = true;
-	tail.hasChild = true;
-	tail.tail = chomper.tail;
-
-	// Update the whole chain's tail
-	Node* pTarget = &tail;
-	while (pTarget->hasParent)
+	if (IsValidTarget(tail, chomper))
 	{
-		pTarget = &g_nodes[pTarget->target];
-		pTarget->tail = chomper.tail;
+		chomper.hasParent = true;
+		tail.hasChild = true;
+		tail.tail = chomper.tail;
+
+		// Update the whole chain's tail
+		short index = g_targets[chomperIndex];
+		while (g_nodes[index].hasParent)
+		{
+			index = g_targets[index];
+			g_nodes[index].tail = chomper.tail;
+		}
+
+		g_positions[chomperIndex] = g_positions[g_targets[chomperIndex]];
 	}
 
 	return S_OK;
@@ -171,31 +179,37 @@ HRESULT Update(uint deltaTime)
 	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	IFC( FindNearestNeighbors() );
+	// Sort into buckets
 
+	// Determine nearest neighbors
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		Node& currentNode = g_nodes[i];
-		Node& targetNode = g_nodes[currentNode.target];
+		IFC( FindNearestNeighbor(i) );
+	}
 
-		// Determine velocity
-		float2 targetVector = g_positions[currentNode.target] - g_positions[i];
-		float  targetDist = targetVector.getLength();
-		float2 targetDir = targetVector / targetDist;
-		currentNode.velocity = targetDir * g_speed;
-
-		// Check for chomps
-		if (targetDist <= g_tailDist && IsValidTarget(targetNode, currentNode))
-		{
-			Chomp(i);
-		}
+	// Determine target vectors
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		short target = g_targets[i];
+		g_vectors[i] = g_positions[target] - g_positions[i];
 	}
 
 	// Determine positions
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		g_positions[i].x += g_nodes[i].velocity.x * deltaTime/1000000.0f;
-		g_positions[i].y += g_nodes[i].velocity.y * deltaTime/1000000.0f;
+		float2 velocity = g_vectors[i];
+		float dist = velocity.getLength();
+		velocity.x = (dist != dist || dist == 0.0f ? 0.0f : velocity.x/dist);
+		velocity.y = (dist != dist || dist == 0.0f ? 0.0f : velocity.y/dist);
+		g_positions[i] = g_positions[i] + velocity * g_speed * float(deltaTime)/1000000.0f;
+	}
+	
+	// Check for chomps
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		float dist = g_vectors[i].getLength();
+		if (dist <= g_tailDist)
+			Chomp(i);
 	}
 
 Cleanup:
