@@ -9,14 +9,16 @@
 /********** Defines *******************************/
 #define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
 #ifdef _DEBUG
-#	define IFC(x) if (FAILED(hr = x)) { char buf[256]; sprintf_s(buf, "IFC Failed at Line %u\n", __LINE__); OutputDebugString(buf); goto Cleanup; }
+#	define IFC(x) { if (FAILED(hr = x)) { char buf[256]; sprintf_s(buf, "IFC Failed at Line %u\n", __LINE__); OutputDebugString(buf); goto Cleanup; } }
 #	define ASSERT(x) if (!(x)) { OutputDebugString("Assert Failed!\n"); DebugBreak(); }
 #else
-#	define IFC(x) if (FAILED(hr = x)) { goto Cleanup; }
+#	define IFC(x) {if (FAILED(hr = x)) { goto Cleanup; }}
 #	define ASSERT(x)
 #endif
 
 #define uint UINT
+
+#define E_NOTARGETS 0x8000000f
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
@@ -98,6 +100,8 @@ bool   g_hasChild[g_numVerts] = {};
 
 GLuint g_vboPos;
 
+bool g_endgame = false;
+
 /**************************************************/
 
 inline bool IsValidTarget(short target, short current)
@@ -107,6 +111,66 @@ inline bool IsValidTarget(short target, short current)
 		 (g_tails[target] != g_tails[current]);	// It can't be part of ourself
 
 	return validTarget;
+}
+
+float SmoothStep(float a, float b, float t)
+{
+	return a + (pow(t,2)*(3-2*t))*(b - a);
+}
+
+HRESULT EndgameUpdate(uint deltaTime)
+{
+	static uint absoluteTime = 0;
+	const float timeLimit = 5000000.0f; // 5 seconds
+
+	absoluteTime += deltaTime;
+
+	for (uint i = 0; i < g_numVerts; i++)
+	{	
+		if (g_positions[i].x > 1.0f || g_positions[i].x < 0.0f)
+			g_vectors[i].x = -g_vectors[i].x;
+		if (g_positions[i].y > 1.0f || g_positions[i].y < 0.0f)
+			g_vectors[i].y = -g_vectors[i].y;
+
+		float velx = SmoothStep(g_vectors[i].x, 0.0f, float(absoluteTime)/timeLimit);
+		float vely = SmoothStep(g_vectors[i].y, 0.0f, float(absoluteTime)/timeLimit);
+
+		g_positions[i].x += + velx * float(deltaTime)/1000000.0f;
+		g_positions[i].y += + vely * float(deltaTime)/1000000.0f;
+	}
+
+	if (absoluteTime > timeLimit)
+	{
+		g_endgame = false;
+		absoluteTime = 0;
+
+		for (uint i = 0; i < g_numVerts; i++)
+		{
+			g_tails[i] = i;
+			g_hasParent[i] = false;
+			g_hasChild[i] = false;
+		}
+	}
+
+	return S_OK;
+}
+
+HRESULT Endgame()
+{
+	g_endgame = true;
+
+	// TODO: Add "shaking" before we explode. The snake should continue
+	//		 to swim along, then start vibrating, then EXPLODE.
+
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		float2 velocity;
+		float maxVelocity = 0.5f; // screens per second
+		g_vectors[i].x = (rand()*2.0f - 1.0f) * maxVelocity;
+		g_vectors[i].y = (rand()*2.0f - 1.0f) * maxVelocity;
+	}
+
+	return S_OK;
 }
 
 HRESULT FindNearestNeighbor(short i)
@@ -130,7 +194,7 @@ HRESULT FindNearestNeighbor(short i)
 		}
 
 		if (nearest == -1)
-			return E_FAIL; // no valid targets found
+			return E_NOTARGETS;
 
 		g_targets[i] = nearest;
 	}
@@ -163,8 +227,8 @@ HRESULT Chomp(short chomper)
 HRESULT Update(uint deltaTime)
 {
 	HRESULT hr = S_OK;
-	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
+
+	// TODO: Optimize for data-drive design
 
 	// Sort into buckets
 
@@ -212,11 +276,17 @@ HRESULT Update(uint deltaTime)
 	}
 
 Cleanup:
+	if (hr == E_NOTARGETS)
+		return Endgame();
+
 	return hr;
 }
 
 HRESULT Render()
 {
+	glClearColor(0.1f, 0.1f, 0.2f, 0.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+
 	glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(g_positions), g_positions, GL_STREAM_DRAW); 
 
@@ -447,7 +517,15 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 			aveDeltaTime = aveDeltaTime * 0.9 + 0.1 * deltaTime;
             previousTime = currentTime;
 
-            IFC( Update((uint) deltaTime) );
+			if (g_endgame == false)
+			{
+				IFC( Update((uint) deltaTime));
+			}
+			else
+			{
+				IFC( EndgameUpdate((uint) deltaTime));
+			}
+
 			Render();
             SwapBuffers(hDC);
             if (glGetError() != GL_NO_ERROR)
