@@ -96,7 +96,6 @@ const float g_speed = 0.1f; // in Screens per second
 float2 g_positions[g_numVerts] = {1};
 float2 g_vectors[g_numVerts] = {1}; // vectors from a node to its target
 short  g_targets[g_numVerts] = {1};
-short  g_tails[g_numVerts] = {1};
 bool   g_hasParent[g_numVerts] = {true};
 bool   g_hasChild[g_numVerts] = {true};
 
@@ -125,11 +124,21 @@ uint g_height;
 
 inline bool IsValidTarget(short target, short current)
 {
-	bool validTarget = 
-		 (g_hasChild[target] == false) &&	// It can't already have a child 
-		 (g_tails[target] != g_tails[current]);	// It can't be part of ourself
+	if (target == current) return false;			// Can't chase ourselves
+	if (g_hasChild[target] == true) return false;	// It can't already have a child
 
-	return validTarget;
+	// Can't chase our own tail
+	short chain = target;
+	while (g_hasParent[chain])
+	{
+		chain = g_targets[chain];
+		if (chain == current)
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 float SmoothStep(float a, float b, float t)
@@ -165,7 +174,6 @@ HRESULT EndgameUpdate(uint deltaTime)
 
 		for (uint i = 0; i < g_numVerts; i++)
 		{
-			g_tails[i] = i;
 			g_hasParent[i] = false;
 			g_hasChild[i] = false;
 		}
@@ -228,15 +236,6 @@ HRESULT Chomp(short chomper)
 	{
 		g_hasParent[chomper] = true;
 		g_hasChild[target] = true;
-		g_tails[target] = g_tails[chomper];
-
-		// Update the whole chain's tail
-		short index = target;
-		while (g_hasParent[index])
-		{
-			index = g_targets[index];
-			g_tails[index] = g_tails[chomper];
-		}
 	}
 
 	return S_OK;
@@ -416,8 +415,8 @@ HRESULT Init()
 	// Initilialize our node attributes
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		// Every node is its own tail initially
-		g_tails[i] = i;
+		g_hasParent[i] = 0;
+		g_hasChild[i] = 0;
 	}
 
 	// Initialize buffers
