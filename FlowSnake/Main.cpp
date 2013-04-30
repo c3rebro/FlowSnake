@@ -91,12 +91,13 @@ const float g_speed = 0.1f; // in Screens per second
 /********** Globals Variables *********************/
 // Use SOA instead of AOS from optimal cache usage
 // We'll traverse each array linearly in each stage of the algorithm
-float2 g_positions[g_numVerts] = {};
-float2 g_vectors[g_numVerts] = {}; // vectors from a node to its target
-short  g_targets[g_numVerts] = {};
-short  g_tails[g_numVerts] = {};
-bool   g_hasParent[g_numVerts] = {};
-bool   g_hasChild[g_numVerts] = {};
+// Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
+float2 g_positions[g_numVerts] = {1};
+float2 g_vectors[g_numVerts] = {1}; // vectors from a node to its target
+short  g_targets[g_numVerts] = {1};
+short  g_tails[g_numVerts] = {1};
+bool   g_hasParent[g_numVerts] = {true};
+bool   g_hasChild[g_numVerts] = {true};
 
 GLuint g_vboPos;
 
@@ -164,7 +165,6 @@ HRESULT Endgame()
 
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		float2 velocity;
 		float maxVelocity = 0.5f; // screens per second
 		g_vectors[i].x = (rand()*2.0f - 1.0f) * maxVelocity;
 		g_vectors[i].y = (rand()*2.0f - 1.0f) * maxVelocity;
@@ -495,7 +495,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
     QueryPerformanceFrequency(&freqTime);
     QueryPerformanceCounter(&previousTime);
 	
-    // -------------------
+	// -------------------
     // Start the Game Loop
     // -------------------
     while (msg.message != WM_QUIT)
