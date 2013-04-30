@@ -16,11 +16,20 @@
 #	define ASSERT(x)
 #endif
 
-#define uint UINT
-
 #define E_NOTARGETS 0x8000000f
 #define MAX_SHORTF 32767.0f
 #define MAX_INTF 2147483647.0f 
+
+#define ATTRIBS_MASK_HASPARENT 0x8000
+#define ATTRIBS_MASK_HASCHILD  0x4000
+#define ATTRIBS_MASK_TARGETID  0x3FFF
+
+#define ATTRIB_HASPARENT(x) (x & ATTRIBS_MASK_HASPARENT)
+#define ATTRIB_HASCHILD(x)  (x & ATTRIBS_MASK_HASCHILD)
+#define ATTRIB_TARGETID(x)  (x & ATTRIBS_MASK_TARGETID)
+
+typedef UINT uint;
+typedef unsigned short ushort;
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
@@ -96,42 +105,53 @@ struct short2
 {
 	void setX(float a)
 	{
-		x = int(a * MAX_SHORTF);
+		//x = int(a * MAX_SHORTF);
+		x=a;
 	}
 
 	void setY(float a)
 	{
-		y = int(a * MAX_SHORTF);
+		//y = int(a * MAX_SHORTF);
+		y=a;
 	}
 
 	float getX()
 	{
-		return x/MAX_SHORTF;
+		//return x/MAX_SHORTF;
+		return x;
 	}
 
 	float getY()
 	{
-		return y/MAX_SHORTF;
+		//return y/MAX_SHORTF;
+		return y;
 	}
 
-	short x;
-	short y;
+	//short x;
+	//short y;
+	float x;
+	float y;
+};
+
+struct Attribs 
+{
+	ushort hasParent  : 1;
+	ushort hasChild   : 1;
+	ushort targetID : 14;
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 16000;
+const uint g_numVerts = 500;
 const float g_tailDist = 0.001f;
-const float g_speed = 0.1f; // in Screens per second
+const float g_speed = 0.3f; // in Screens per second
 
 /********** Globals Variables *********************/
 // Use SOA instead of AOS from optimal cache usage
 // We'll traverse each array linearly in each stage of the algorithm
 
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
-short2 g_positions[g_numVerts] = {{1,1}};
-short  g_targets[g_numVerts] = {1};
-bool   g_hasParent[g_numVerts] = {true};
-bool   g_hasChild[g_numVerts] = {true};
+short2  g_positions[g_numVerts] = {{1,1}};
+Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
 
 // 128k total memory. 
 // I think I can pack particle attributes into 6 bytes.
@@ -158,14 +178,14 @@ uint g_height;
 
 inline bool IsValidTarget(short target, short current)
 {
-	if (target == current) return false;			// Can't chase ourselves
-	if (g_hasChild[target] == true) return false;	// It can't already have a child
+	if (target == current) return false;					// Can't chase ourselves
+	if (g_attribs[target].hasChild == true) return false;	// It can't already have a child
 
 	// Can't chase our own tail
 	short chain = target;
-	while (g_hasParent[chain])
+	while (g_attribs[chain].hasParent)
 	{
-		chain = g_targets[chain];
+		chain = g_attribs[chain].targetID;
 		if (chain == current)
 		{
 			return false;
@@ -235,7 +255,7 @@ HRESULT Endgame()
 
 HRESULT FindNearestNeighbor(short i)
 {
-	if (g_hasParent[i] == false) // Find the nearest potential parent
+	if (g_attribs[i].hasParent == false) // Find the nearest potential parent
 	{
 		short nearest = -1;
 		float minDist = 1.0f;
@@ -258,7 +278,7 @@ HRESULT FindNearestNeighbor(short i)
 		if (nearest == -1)
 			return E_NOTARGETS;
 
-		g_targets[i] = nearest;
+		g_attribs[i].targetID = nearest;
 	}
 
 	return S_OK;
@@ -266,12 +286,12 @@ HRESULT FindNearestNeighbor(short i)
 
 HRESULT Chomp(short chomper)
 {
-	short target = g_targets[chomper];
+	short target = g_attribs[chomper].targetID;
 	
 	if (IsValidTarget(target, chomper))
 	{
-		g_hasParent[chomper] = true;
-		g_hasChild[target] = true;
+		g_attribs[chomper].hasParent = true;
+		g_attribs[target].hasChild = true;
 	}
 
 	return S_OK;
@@ -294,7 +314,7 @@ HRESULT Update(uint deltaTime)
 	for (uint i = 0; i < g_numVerts; i++)
 	{
 		// Get target vector
-		short target = g_targets[i];
+		short target = g_attribs[i].targetID;
 		float2 targetVec;
 		targetVec.x = g_positions[target].getX() - g_positions[i].getX();
 		targetVec.y = g_positions[target].getY() - g_positions[i].getY();
@@ -306,7 +326,7 @@ HRESULT Update(uint deltaTime)
 		
 		// Calculate change in position
 		float2 offset;
-		if (g_hasParent[i])
+		if (g_attribs[i].hasParent)
 		{
 			// This controls wigglyness. Perhaps it should be a function of velocity? (static is more wiggly)
 			float parentPaddingRadius = g_tailDist;// + (rand() * 2 - 1)*g_tailDist*0.3f;
@@ -447,8 +467,6 @@ HRESULT Init()
 	// Initilialize our node attributes
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		g_hasParent[i] = 0;
-		g_hasChild[i] = 0;
 	}
 
 	// Initialize buffers
@@ -459,7 +477,7 @@ HRESULT Init()
     glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
     glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
     glEnableVertexAttribArray(positionSlot);
-    glVertexAttribPointer(positionSlot, 2, GL_SHORT, GL_TRUE, stride, 0);
+    glVertexAttribPointer(positionSlot, 2, GL_FLOAT, GL_TRUE, stride, 0);
 
 Cleanup:
 	return hr;
@@ -545,6 +563,8 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 
     QueryPerformanceFrequency(&freqTime);
     QueryPerformanceCounter(&previousTime);
+
+	uint test = sizeof(Attribs);
 
 	// -------------------
     // Start the Game Loop
