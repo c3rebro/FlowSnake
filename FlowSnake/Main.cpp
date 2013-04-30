@@ -19,11 +19,14 @@
 #define uint UINT
 
 #define E_NOTARGETS 0x8000000f
+#define MAX_SHORTF 32767.0f
+#define MAX_INTF 2147483647.0f 
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
 void Error(const char* pStr, ...);
-float rand();
+float frand();
+short srand();
 
 PFNGLGENBUFFERSPROC glGenBuffers;
 PFNGLBINDBUFFERPROC glBindBuffer;
@@ -49,6 +52,12 @@ struct float2
 {
 	float x;
 	float y;
+
+	float2 operator= (float a)
+	{
+		x = a;
+		y = a;
+	}
 
 	float getLength()
 	{
@@ -79,12 +88,38 @@ struct float2
 	float2 operator* (float a)
 	{
 		float2 ret = {x*a, y*a};
-		return ret;
+		return ret; 
 	}
 };
 
+struct short2
+{
+	void setX(float a)
+	{
+		x = int(a * MAX_SHORTF);
+	}
+
+	void setY(float a)
+	{
+		y = int(a * MAX_SHORTF);
+	}
+
+	float getX()
+	{
+		return x/MAX_SHORTF;
+	}
+
+	float getY()
+	{
+		return y/MAX_SHORTF;
+	}
+
+	short x;
+	short y;
+};
+
 /********** Global Constants***********************/
-const uint g_numVerts = 500;
+const uint g_numVerts = 16000;
 const float g_tailDist = 0.001f;
 const float g_speed = 0.1f; // in Screens per second
 
@@ -93,8 +128,7 @@ const float g_speed = 0.1f; // in Screens per second
 // We'll traverse each array linearly in each stage of the algorithm
 
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
-float2 g_positions[g_numVerts] = {1};
-float2 g_vectors[g_numVerts] = {1}; // vectors from a node to its target
+short2 g_positions[g_numVerts] = {{1,1}};
 short  g_targets[g_numVerts] = {1};
 bool   g_hasParent[g_numVerts] = {true};
 bool   g_hasChild[g_numVerts] = {true};
@@ -148,53 +182,53 @@ float SmoothStep(float a, float b, float t)
 
 HRESULT EndgameUpdate(uint deltaTime)
 {
-	static uint absoluteTime = 0;
-	const float timeLimit = 5000000.0f; // 5 seconds
+	//static uint absoluteTime = 0;
+	//const float timeLimit = 5000000.0f; // 5 seconds
 
-	absoluteTime += deltaTime;
+	//absoluteTime += deltaTime;
 
-	for (uint i = 0; i < g_numVerts; i++)
-	{	
-		if (g_positions[i].x > 1.0f || g_positions[i].x < 0.0f)
-			g_vectors[i].x = -g_vectors[i].x;
-		if (g_positions[i].y > 1.0f || g_positions[i].y < 0.0f)
-			g_vectors[i].y = -g_vectors[i].y;
+	//for (uint i = 0; i < g_numVerts; i++)
+	//{	
+	//	if (g_positions[i].x > 1.0f || g_positions[i].x < 0.0f)
+	//		g_vectors[i].x = -g_vectors[i].x;
+	//	if (g_positions[i].y > 1.0f || g_positions[i].y < 0.0f)
+	//		g_vectors[i].y = -g_vectors[i].y;
 
-		float velx = SmoothStep(g_vectors[i].x, 0.0f, float(absoluteTime)/timeLimit);
-		float vely = SmoothStep(g_vectors[i].y, 0.0f, float(absoluteTime)/timeLimit);
+	//	float velx = SmoothStep(g_vectors[i].x, 0.0f, float(absoluteTime)/timeLimit);
+	//	float vely = SmoothStep(g_vectors[i].y, 0.0f, float(absoluteTime)/timeLimit);
 
-		g_positions[i].x += + velx * float(deltaTime)/1000000.0f;
-		g_positions[i].y += + vely * float(deltaTime)/1000000.0f;
-	}
+	//	g_positions[i].x += + velx * float(deltaTime)/1000000.0f;
+	//	g_positions[i].y += + vely * float(deltaTime)/1000000.0f;
+	//}
 
-	if (absoluteTime > timeLimit)
-	{
-		g_endgame = false;
-		absoluteTime = 0;
+	//if (absoluteTime > timeLimit)
+	//{
+	//	g_endgame = false;
+	//	absoluteTime = 0;
 
-		for (uint i = 0; i < g_numVerts; i++)
-		{
-			g_hasParent[i] = false;
-			g_hasChild[i] = false;
-		}
-	}
+	//	for (uint i = 0; i < g_numVerts; i++)
+	//	{
+	//		g_hasParent[i] = false;
+	//		g_hasChild[i] = false;
+	//	}
+	//}
 
 	return S_OK;
 }
 
 HRESULT Endgame()
 {
-	g_endgame = true;
+	//g_endgame = true;
 
-	// TODO: Add "shaking" before we explode. The snake should continue
-	//		 to swim along, then start vibrating, then EXPLODE.
+	//// TODO: Add "shaking" before we explode. The snake should continue
+	////		 to swim along, then start vibrating, then EXPLODE.
 
-	for (uint i = 0; i < g_numVerts; i++)
-	{
-		float maxVelocity = 0.5f; // screens per second
-		g_vectors[i].x = (rand()*2.0f - 1.0f) * maxVelocity;
-		g_vectors[i].y = (rand()*2.0f - 1.0f) * maxVelocity;
-	}
+	//for (uint i = 0; i < g_numVerts; i++)
+	//{
+	//	float maxVelocity = 0.5f; // screens per second
+	//	g_vectors[i].x = (rand()*2.0f - 1.0f) * maxVelocity;
+	//	g_vectors[i].y = (rand()*2.0f - 1.0f) * maxVelocity;
+	//}
 
 	return S_OK;
 }
@@ -210,7 +244,9 @@ HRESULT FindNearestNeighbor(short i)
 		{
 			if (IsValidTarget(j, i))
 			{
-				float dist = (g_positions[j] - g_positions[i]).getLength();
+				float diffx = g_positions[j].getX() - g_positions[i].getX();
+				float diffy = g_positions[j].getY() - g_positions[i].getY();
+				float dist = sqrt(diffx*diffx + diffy*diffy) / MAX_INTF;
 				if (dist < minDist)
 				{
 					minDist = dist;
@@ -255,39 +291,35 @@ HRESULT Update(uint deltaTime)
 		IFC( FindNearestNeighbor(i) );
 	}
 
-	// Determine target vectors
 	for (uint i = 0; i < g_numVerts; i++)
 	{
+		// Get target vector
 		short target = g_targets[i];
-		g_vectors[i] = g_positions[target] - g_positions[i];
-	}
+		float2 targetVec;
+		targetVec.x = g_positions[target].getX() - g_positions[i].getX();
+		targetVec.y = g_positions[target].getY() - g_positions[i].getY();
 
-	// Determine positions
-	for (uint i = 0; i < g_numVerts; i++)
-	{
-		float2 dir = g_vectors[i];
-		float dist = dir.getLength();
-		dir.x = (dist != dist || dist == 0.0f ? 0.0f : dir.x/dist);
-		dir.y = (dist != dist || dist == 0.0f ? 0.0f : dir.y/dist);
+		float dist = targetVec.getLength();
+		float2 dir = targetVec;
+		if (dist != 0)
+			dir = dir / dist;
 		
+		// Calculate change in position
 		float2 offset;
-
 		if (g_hasParent[i])
 		{
 			// This controls wigglyness. Perhaps it should be a function of velocity? (static is more wiggly)
-			float distanceToParent = g_tailDist;// + (rand() * 2 - 1)*g_tailDist*0.3f;
-			offset = g_vectors[i] * (1 - distanceToParent / g_vectors[i].getLength());
+			float parentPaddingRadius = g_tailDist;// + (rand() * 2 - 1)*g_tailDist*0.3f;
+			offset = targetVec - dir * parentPaddingRadius;
 		}
 		else
 			offset = dir * g_speed * float(deltaTime)/1000000.0f;
 		
-		g_positions[i] = g_positions[i] + offset;
-	}
-	
-	// Check for chomps
-	for (uint i = 0; i < g_numVerts; i++)
-	{
-		float dist = g_vectors[i].getLength();
+		// Update positions
+		g_positions[i].setX(g_positions[i].getX() + offset.x);
+		g_positions[i].setY(g_positions[i].getY() + offset.y);
+		
+		// Check for chomps
 		if (dist <= g_tailDist)
 			Chomp(i);
 	}
@@ -322,7 +354,7 @@ HRESULT CreateProgram(GLuint* program)
 		layout(location = 0) in vec4 position; \
 		void main() \
 		{ \
-			gl_Position = position * 2.0f - 1.0f; \
+			gl_Position = position; \
 		}";
 
 	const char* pixelShaderString = "\
@@ -408,8 +440,8 @@ HRESULT Init()
 	// Calculate random starting positions
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		g_positions[i].x = rand();
-		g_positions[i].y = rand();
+		g_positions[i].setX(frand()*2 - 1);
+		g_positions[i].setY(frand()*2 - 1);
 	}
 
 	// Initilialize our node attributes
@@ -427,7 +459,7 @@ HRESULT Init()
     glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
     glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
     glEnableVertexAttribArray(positionSlot);
-    glVertexAttribPointer(positionSlot, 2, GL_FLOAT, GL_FALSE, stride, 0);
+    glVertexAttribPointer(positionSlot, 2, GL_SHORT, GL_TRUE, stride, 0);
 
 Cleanup:
 	return hr;
@@ -513,7 +545,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 
     QueryPerformanceFrequency(&freqTime);
     QueryPerformanceCounter(&previousTime);
-	
+
 	// -------------------
     // Start the Game Loop
     // -------------------
@@ -595,11 +627,18 @@ void Error(const char* pStr, ...)
     OutputDebugString(msg);
 }
 
-float rand()
+// Produces random short from 0 to SHRT_MAX (32767)
+short srand()
 {
-	#define RAND_MAX 32767.0f
 	static uint seed = 123456789;
 
 	seed = (214013*seed+2531011); 
-	return float(((seed>>16)&0x7FFF)/RAND_MAX); 
+	return (seed>>16)&0x7FFF; 
+}
+
+// Produces a random float from 0 to 1
+float frand()
+{
+	#define RAND_MAX 32767.0f
+	return float(srand()/RAND_MAX); 
 }
