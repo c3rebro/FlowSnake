@@ -4,6 +4,7 @@
 #include <math.h>  // sqrt
 #include <stdio.h> // _vsnwprintf_s. Can disable for Release
 #include "glext.h" // glGenBuffers, glBindBuffers, ...
+#include "Types.h" // float2, short2
 
 
 /********** Defines *******************************/
@@ -19,14 +20,6 @@
 #define E_NOTARGETS 0x8000000f
 #define MAX_SHORTF 32767.0f
 #define MAX_INTF 2147483647.0f 
-
-#define ATTRIBS_MASK_HASPARENT 0x8000
-#define ATTRIBS_MASK_HASCHILD  0x4000
-#define ATTRIBS_MASK_TARGETID  0x3FFF
-
-#define ATTRIB_HASPARENT(x) (x & ATTRIBS_MASK_HASPARENT)
-#define ATTRIB_HASCHILD(x)  (x & ATTRIBS_MASK_HASCHILD)
-#define ATTRIB_TARGETID(x)  (x & ATTRIBS_MASK_TARGETID)
 
 typedef UINT uint;
 typedef unsigned short ushort;
@@ -57,81 +50,6 @@ PFNGLCOMPILESHADERPROC glCompileShader;
 PFNGLGETSHADERIVPROC glGetShaderiv;
 
 /********** Structure Definitions******************/
-struct float2
-{
-	float x;
-	float y;
-
-	float2 operator= (float a)
-	{
-		x = a;
-		y = a;
-	}
-
-	float getLength()
-	{
-		if (x == 0 && y == 0)
-			return 0;
-		else
-			return sqrt(x*x + y*y);
-	}
-
-	float2 operator- (float2 a)
-	{
-		float2 ret = {x - a.x, y - a.y};
-		return ret;
-	}
-
-	float2 operator+ (float2 a)
-	{
-		float2 ret = {x + a.x, y + a.y};
-		return ret;
-	}
-
-	float2 operator/ (float a)
-	{
-		float2 ret = {x/a, y/a};
-		return ret;
-	}
-	
-	float2 operator* (float a)
-	{
-		float2 ret = {x*a, y*a};
-		return ret; 
-	}
-};
-
-struct short2
-{
-	void setX(float a)
-	{
-		//x = int(a * MAX_SHORTF);
-		x=a;
-	}
-
-	void setY(float a)
-	{
-		//y = int(a * MAX_SHORTF);
-		y=a;
-	}
-
-	float getX()
-	{
-		//return x/MAX_SHORTF;
-		return x;
-	}
-
-	float getY()
-	{
-		//return y/MAX_SHORTF;
-		return y;
-	}
-
-	//short x;
-	//short y;
-	float x;
-	float y;
-};
 
 struct Attribs 
 {
@@ -146,8 +64,10 @@ const float g_tailDist = 0.001f;
 const float g_speed = 0.3f; // in Screens per second
 
 /********** Globals Variables *********************/
-// Use SOA instead of AOS from optimal cache usage
-// We'll traverse each array linearly in each stage of the algorithm
+GLuint g_vboPos = 0;
+bool g_endgame = false;
+uint g_width = 1024;
+uint g_height = 768;
 
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
 short2  g_positions[g_numVerts] = {{1,1}};
@@ -168,11 +88,6 @@ Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
 // Well it's a start. That's 32000 bytes for spatial partitioning, plus 96000 for the particles = 128000. 
 // That leaves 3072 bytes for the .exe and extra .data. Close to doable!
 short g_bins[16000];
-
-GLuint g_vboPos;
-bool g_endgame = false;
-uint g_width;
-uint g_height;
 
 /**************************************************/
 
@@ -539,8 +454,6 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
     LARGE_INTEGER freqTime;
 	double aveDeltaTime = 0.0;
 
-	g_width = 1024;
-	g_height = 768;
 	IFC( InitWindow(hWnd, g_width, g_height) );
     hDC = GetDC(hWnd);
 
