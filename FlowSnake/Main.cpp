@@ -91,6 +91,7 @@ const float g_speed = 0.1f; // in Screens per second
 /********** Globals Variables *********************/
 // Use SOA instead of AOS from optimal cache usage
 // We'll traverse each array linearly in each stage of the algorithm
+
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
 float2 g_positions[g_numVerts] = {1};
 float2 g_vectors[g_numVerts] = {1}; // vectors from a node to its target
@@ -99,9 +100,26 @@ short  g_tails[g_numVerts] = {1};
 bool   g_hasParent[g_numVerts] = {true};
 bool   g_hasChild[g_numVerts] = {true};
 
-GLuint g_vboPos;
+// 128k total memory. 
+// I think I can pack particle attributes into 6 bytes.
+// (We'll need to do some complex searching at chomp time, to avoid our tail)
+// Targeting 16000 particles, that leaves 35072 bytes (34.25k)
+// Leave 4.25k for the .exe and extra .data
+// That's 30k for the spatial partioning scheme
+// With run-time variable resolution we'll have to do some math to calculate bin size
+// What's fixed: the number of bins, or their size? ... the number of bins (should make the math easier)
+// TotalBinCost = 2 * SlotsPerBin * NumBins ....
+// No, no. How about a dynamic number of bins, based on the number of active particles. 
+// Start with 16k particles, 1 bin for every 4 particles. 4000 bins, 4 slots each, 2 bytes per slot. 
+// Then reduce the number of active bins every time we halve the number of active particles.
+// Well it's a start. That's 32000 bytes for spatial partitioning, plus 96000 for the particles = 128000. 
+// That leaves 3072 bytes for the .exe and extra .data. Close to doable!
+short g_bins[16000];
 
+GLuint g_vboPos;
 bool g_endgame = false;
+uint g_width;
+uint g_height;
 
 /**************************************************/
 
@@ -472,7 +490,9 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
     LARGE_INTEGER freqTime;
 	double aveDeltaTime = 0.0;
 
-	IFC( InitWindow(hWnd, 1024, 768) );
+	g_width = 1024;
+	g_height = 768;
+	IFC( InitWindow(hWnd, g_width, g_height) );
     hDC = GetDC(hWnd);
 
     // Create the GL context.
