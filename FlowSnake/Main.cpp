@@ -81,17 +81,9 @@ struct float2
 	}
 };
 
-// TODO: this can be packed into one short
-struct Node
-{
-	bool hasParent;
-	bool hasChild;
-	short tail;
-};
-
 /********** Global Constants***********************/
-const uint g_numVerts = 20;
-const float g_tailDist = 0.01f;
+const uint g_numVerts = 500;
+const float g_tailDist = 0.001f;
 const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
@@ -100,35 +92,33 @@ const float g_speed = 0.1f; // in Screens per second
 float2 g_positions[g_numVerts] = {};
 float2 g_vectors[g_numVerts] = {}; // vectors from a node to its target
 short  g_targets[g_numVerts] = {};
-Node   g_nodes[g_numVerts] = {};
+short  g_tails[g_numVerts] = {};
+bool   g_hasParent[g_numVerts] = {};
+bool   g_hasChild[g_numVerts] = {};
 
 GLuint g_vboPos;
 
 /**************************************************/
 
-inline bool IsValidTarget(Node& target, Node& current)
+inline bool IsValidTarget(short target, short current)
 {
 	bool validTarget = 
-		 (target.hasChild == false) &&	// It can't already have a child 
-		 (target.tail != current.tail);	// It can't be part of ourself
+		 (g_hasChild[target] == false) &&	// It can't already have a child 
+		 (g_tails[target] != g_tails[current]);	// It can't be part of ourself
 
 	return validTarget;
 }
 
 HRESULT FindNearestNeighbor(short i)
 {
-	Node& n = g_nodes[i];
-
-	if (n.hasParent == false) // Find the nearest potential parent
+	if (g_hasParent[i] == false) // Find the nearest potential parent
 	{
 		short nearest = -1;
 		float minDist = 1.0f;
 
 		for (uint j = 0; j < g_numVerts; j++)
 		{
-			Node& target = g_nodes[j];
-
-			if (IsValidTarget(target, n))
+			if (IsValidTarget(j, i))
 			{
 				float dist = (g_positions[j] - g_positions[i]).getLength();
 				if (dist < minDist)
@@ -148,26 +138,23 @@ HRESULT FindNearestNeighbor(short i)
 	return S_OK;
 }
 
-HRESULT Chomp(short chomperIndex)
+HRESULT Chomp(short chomper)
 {
-	Node& chomper = g_nodes[chomperIndex];
-	Node& tail = g_nodes[g_targets[chomperIndex]];
-
-	if (IsValidTarget(tail, chomper))
+	short target = g_targets[chomper];
+	
+	if (IsValidTarget(target, chomper))
 	{
-		chomper.hasParent = true;
-		tail.hasChild = true;
-		tail.tail = chomper.tail;
+		g_hasParent[chomper] = true;
+		g_hasChild[target] = true;
+		g_tails[target] = g_tails[chomper];
 
 		// Update the whole chain's tail
-		short index = g_targets[chomperIndex];
-		while (g_nodes[index].hasParent)
+		short index = target;
+		while (g_hasParent[index])
 		{
 			index = g_targets[index];
-			g_nodes[index].tail = chomper.tail;
+			g_tails[index] = g_tails[chomper];
 		}
-
-		g_positions[chomperIndex] = g_positions[g_targets[chomperIndex]];
 	}
 
 	return S_OK;
@@ -197,11 +184,23 @@ HRESULT Update(uint deltaTime)
 	// Determine positions
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		float2 velocity = g_vectors[i];
-		float dist = velocity.getLength();
-		velocity.x = (dist != dist || dist == 0.0f ? 0.0f : velocity.x/dist);
-		velocity.y = (dist != dist || dist == 0.0f ? 0.0f : velocity.y/dist);
-		g_positions[i] = g_positions[i] + velocity * g_speed * float(deltaTime)/1000000.0f;
+		float2 dir = g_vectors[i];
+		float dist = dir.getLength();
+		dir.x = (dist != dist || dist == 0.0f ? 0.0f : dir.x/dist);
+		dir.y = (dist != dist || dist == 0.0f ? 0.0f : dir.y/dist);
+		
+		float2 offset;
+
+		if (g_hasParent[i])
+		{
+			// This controls wigglyness. Perhaps it should be a function of velocity? (static is more wiggly)
+			float distanceToParent = g_tailDist;// + (rand() * 2 - 1)*g_tailDist*0.3f;
+			offset = g_vectors[i] * (1 - distanceToParent / g_vectors[i].getLength());
+		}
+		else
+			offset = dir * g_speed * float(deltaTime)/1000000.0f;
+		
+		g_positions[i] = g_positions[i] + offset;
 	}
 	
 	// Check for chomps
@@ -244,7 +243,7 @@ HRESULT CreateProgram(GLuint* program)
 		out vec4 outputColor; \
 		void main() \
 		{ \
-		   outputColor = vec4(1.0f, 1.0f, 1.0f, 1.0f); \
+			outputColor = 1.0f; \
 		} ";
 
 	GLint success;
@@ -326,21 +325,17 @@ HRESULT Init()
 		g_positions[i].y = rand();
 	}
 
-	// Initilialize our node list
+	// Initilialize our node attributes
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		Node& n = g_nodes[i];
-		n.hasChild = false;
-		n.hasParent = false;
-
 		// Every node is its own tail initially
-		n.tail = i;
+		g_tails[i] = i;
 	}
 
 	// Initialize buffers
-	const uint positionSlot = 0;
+	uint positionSlot = 0;
     GLsizei stride = sizeof(g_positions[0]);
-	GLsizei totalSize = stride * countof(g_positions);
+	GLsizei totalSize = sizeof(g_positions);
     glGenBuffers(1, &g_vboPos);
     glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
     glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
