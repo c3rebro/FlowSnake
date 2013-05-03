@@ -61,7 +61,7 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 1000;
+const uint g_numVerts = 4000;
 const uint g_numSlots = 8000;
 const float g_tailDist = 0.003f;
 const float g_speed = 0.1f; // in Screens per second
@@ -71,11 +71,12 @@ GLuint g_vboPos = 0;
 uint g_width = 1024;
 uint g_height = 768;
 
-uint binStride; 
-uint binCountX;
-uint binCountY;
-float binNWidth;
-float binNHeight;
+uint g_numBinUpdates = 4; // We only update 1/g_numBinUpdates bins each frame
+uint g_binStride;	// Number of slots per bin. Each slot holds an index to a node
+uint g_binCountX;	// Number of bins in the X dimension needed to fill the screen
+uint g_binCountY;	// Number of bins in the X dimension needed to fill the screen
+float g_binNWidth;  // Bin width in normalized (0..1) space
+float g_binNHeight; // Bin height in normalized (0..1) space
 
 bool g_endgame = false;
 short g_numActiveVerts = g_numVerts;
@@ -198,11 +199,11 @@ HRESULT Chomp(short chomper)
 
 uint Bin(float posx, float posy)
 {
-	ushort bucketX = ushort(posx / binNWidth);
-	ushort bucketY = ushort(posy / binNHeight);
+	ushort bucketX = ushort(posx / g_binNWidth);
+	ushort bucketY = ushort(posy / g_binNHeight);
 
 	// TODO: Tile these. 2D Tiling? (3D?)
-	return bucketX + bucketY * binCountX;
+	return bucketX + bucketY * g_binCountX;
 }
 
 HRESULT FindNearestNeighborN2(short i)
@@ -245,7 +246,7 @@ HRESULT FindNearestNeighbor(short index)
 	float2 pos = {g_positions[index].getX(), g_positions[index].getY()};
 
 	// Search the four nearest bins
-	float2 offset = {binNWidth * 0.5f, binNHeight * 0.5f};
+	float2 offset = {g_binNWidth * 0.5f, g_binNHeight * 0.5f};
 	uint bins[4];
 	bins[0] = Bin(pos.x - offset.x, pos.y - offset.y);
 	bins[1] = Bin(pos.x + offset.x, pos.y - offset.y);
@@ -257,9 +258,9 @@ HRESULT FindNearestNeighbor(short index)
 	ushort nearest = -1;
 	for (uint i = 0; i < 4; i++)
 	{
-		for (uint slot = 0; slot < binStride; slot++)
+		for (uint slot = 0; slot < g_binStride; slot++)
 		{
-			ushort target = g_slots[bins[i]*binStride + slot];
+			ushort target = g_slots[bins[i]*g_binStride + slot];
 			if (target == EMPTY_SLOT)
 				break;
 			else if (IsValidTarget(target, index))
@@ -294,23 +295,24 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	float pixelsPerVert = (g_width * g_height) / g_numActiveVerts;
 	float binDiameterPixels = sqrtf(pixelsPerVert); // conservative
 	
-	binNHeight = binDiameterPixels / g_height;
-	binNWidth  = binDiameterPixels / g_width;
-	binCountX  = ceilf(1.0f / binNWidth)+2;
-	binCountY  = ceilf(1.0f / binNHeight)+2;
-	binStride  = g_numSlots / (binCountX * binCountY);
+	g_binNHeight = binDiameterPixels / g_height;
+	g_binNWidth  = binDiameterPixels / g_width;
+	g_binCountX  = ceilf(1.0f / g_binNWidth)+2;
+	g_binCountY  = ceilf(1.0f / g_binNHeight)+2;
+	g_binStride  = g_numSlots / (g_binCountX * g_binCountY);
 
 	// TODO: Not this! Inefficient
 	memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
 	for (uint i = 0; i < g_numVerts; i++)
 	{
 		uint bin = Bin(g_positions[i].getX(), g_positions[i].getY());
+
 		// Find first empty bin slot
-		for (uint slot = 0; slot < binStride; slot++) 
+		for (uint slot = 0; slot < g_binStride; slot++) 
 		{
-			if (g_slots[bin*binStride + slot] == EMPTY_SLOT)
+			if (g_slots[bin*g_binStride + slot] == EMPTY_SLOT)
 			{
-				g_slots[bin*binStride + slot] = i;
+				g_slots[bin*g_binStride + slot] = i;
 				break;
 			}
 		}
