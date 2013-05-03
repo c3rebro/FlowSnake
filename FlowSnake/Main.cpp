@@ -17,6 +17,7 @@
 #endif
 
 #define E_NOTARGETS 0x8000000f
+#define EMPTY_SLOT 0xffff
 #define MAX_SHORTF 4294967295.0f
 #define MAX_INTF 2147483647.0f 
 
@@ -60,14 +61,21 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 500;
+const uint g_numVerts = 2000;
+const uint g_numSlots = 8000;
 const float g_tailDist = 0.003f;
-const float g_speed = 0.3f; // in Screens per second
+const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
 GLuint g_vboPos = 0;
 uint g_width = 1024;
 uint g_height = 768;
+
+uint binStride; 
+uint binCountX;
+uint binCountY;
+float binNWidth;
+float binNHeight;
 
 bool g_endgame = false;
 short g_numActiveVerts = g_numVerts;
@@ -93,7 +101,7 @@ Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
 // If we save the targets, we can re-search every 4th or so frame (that's only 64ms, not human noticeable)
 // Then we only need a quarter of the binning space! Woo! 
 // So thats 4000 slots (1 short each) for 16000 particles. Which leaves 27072 bytes left over. Nice.
-short g_bins[16000];
+ushort g_slots[g_numSlots];
 
 /**************************************************/
 
@@ -174,7 +182,30 @@ HRESULT Endgame()
 	return S_OK;
 }
 
-HRESULT FindNearestNeighbor(short i)
+HRESULT Chomp(short chomper)
+{
+	short target = g_attribs[chomper].targetID;
+	
+	if (IsValidTarget(target, chomper))
+	{
+		g_attribs[chomper].hasParent = true;
+		g_attribs[target].hasChild = true;
+		--g_numActiveVerts;
+	}
+
+	return S_OK;
+}
+
+uint Bin(float posx, float posy)
+{
+	ushort bucketX = ushort(posx / binNWidth);
+	ushort bucketY = ushort(posy / binNHeight);
+
+	// TODO: Tile these. 2D Tiling? (3D?)
+	return bucketX + bucketY * binCountX;
+}
+
+HRESULT FindNearestNeighborN2(short i)
 {
 	if (g_attribs[i].hasParent == false) // Find the nearest potential parent
 	{
@@ -187,7 +218,7 @@ HRESULT FindNearestNeighbor(short i)
 			{
 				float diffx = g_positions[j].getX() - g_positions[i].getX();
 				float diffy = g_positions[j].getY() - g_positions[i].getY();
-				float dist = sqrt(diffx*diffx + diffy*diffy);
+				float dist = sqrtf(diffx*diffx + diffy*diffy);
 				if (dist < minDist)
 				{
 					minDist = dist;
@@ -205,16 +236,48 @@ HRESULT FindNearestNeighbor(short i)
 	return S_OK;
 }
 
-HRESULT Chomp(short chomper)
+HRESULT FindNearestNeighbor(short index)
 {
-	short target = g_attribs[chomper].targetID;
-	
-	if (IsValidTarget(target, chomper))
+	if (g_attribs[index].hasParent == true)
+		return S_FALSE;
+
+	float2 pos = {g_positions[index].getX(), g_positions[index].getY()};
+
+	// Search the four nearest bins
+	float2 offset = {binNWidth * 0.5f, binNHeight * 0.5f};
+	uint bins[4];
+	bins[0] = Bin(pos.x - offset.x, pos.y - offset.y);
+	bins[1] = Bin(pos.x + offset.x, pos.y - offset.y);
+	bins[2] = Bin(pos.x - offset.x, pos.y + offset.y);
+	bins[3] = Bin(pos.x + offset.x, pos.y + offset.y);
+
+	// Find the closest target in these bins (if none is found, keep old target)
+	short minDist = MAX_SHORTF;
+	ushort nearest = -1;
+	for (uint i = 0; i < 4; i++)
 	{
-		g_attribs[chomper].hasParent = true;
-		g_attribs[target].hasChild = true;
-		--g_numActiveVerts;
+		for (uint slot = 0; slot < binStride; slot++)
+		{
+			ushort target = g_slots[bins[i]*binStride + slot];
+			if (target == EMPTY_SLOT)
+				break;
+			else if (IsValidTarget(target, index))
+			{
+				// TODO: Do this math in shorts
+				short diffx = g_positions[target].x - g_positions[index].x;
+				short diffy = g_positions[target].y - g_positions[index].y;
+				short dist = diffx + diffy; // Manhattan distance for now
+				if (dist < minDist)
+				{
+					minDist = dist;
+					nearest = target;
+				}
+			}
+		}
 	}
+
+	if (nearest != ushort(-1)) g_attribs[index].targetID = nearest;
+	FindNearestNeighborN2(index); // We failed, revert to n^2 method
 
 	return S_OK;
 }
@@ -226,24 +289,31 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	// TODO: Optimize for data-drive design
 
 	// Sort into buckets
-	float aspect = g_width / float(g_height);
-	uint g_numSlots = 16000;
-	uint bucketStride = g_numSlots / g_numActiveVerts;
-	uint bucketCount = g_numSlots / bucketStride; // Not equal to g_numActiveVerts, it's integer division
+	float pixelsPerVert = (g_width * g_height) / g_numActiveVerts;
+	float binDiameterPixels = sqrtf(pixelsPerVert); // conservative
+	
+	binNHeight = binDiameterPixels / g_height;
+	binNWidth  = binDiameterPixels / g_width;
+	binCountX  = ceilf(1.0f / binNWidth)+2;
+	binCountY  = ceilf(1.0f / binNHeight)+2;
+	binStride  = g_numSlots / (binCountX * binCountY);
 
-	// This wastes a lot of bins (the bin locations are outside positions range)
-	// TODO: Refactor for better use of bins
-	float bucketHeight = MAX_SHORTF / sqrt(float(bucketCount)); // in short space (0..MAX_SHORTF)
-	float bucketWidth = bucketHeight * aspect;
-
+	// TODO: Not this! Inefficient
+	memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		short bucketX = g_positions[i].x / bucketWidth;
-		short bucketY = g_positions[i].y / bucketHeight;
+		uint bin = Bin(g_positions[i].getX(), g_positions[i].getY());
+		// Find first empty bin slot
+		for (uint slot = 0; slot < binStride; slot++) 
+		{
+			if (g_slots[bin*binStride + slot] == EMPTY_SLOT)
+			{
+				g_slots[bin*binStride + slot] = i;
+				break;
+			}
+		}
 
-		// TODO: Tile these. 2D Tiling? (3D?)
-		short bucket = bucketX + bucketY * ceilf(MAX_SHORTF/bucketWidth);
-		uint test = 0;
+		// TODO: What if all slots in the bin are full
 	}
 
 	// Determine nearest neighbors
@@ -283,7 +353,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 		g_positions[i].setY(g_positions[i].getY() + offset.y);
 		
 		// Check for chomps
-		if (dist <= g_tailDist)
+		if (g_attribs[i].hasParent == false && dist <= g_tailDist)
 			Chomp(i);
 	}
 
