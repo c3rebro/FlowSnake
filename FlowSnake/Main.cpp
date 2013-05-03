@@ -4,7 +4,6 @@
 #include <math.h>  // sqrt
 #include <stdio.h> // _vsnwprintf_s. Can disable for Release
 #include "glext.h" // glGenBuffers, glBindBuffers, ...
-#include "Types.h" // float2, short2
 
 
 /********** Defines *******************************/
@@ -18,7 +17,7 @@
 #endif
 
 #define E_NOTARGETS 0x8000000f
-#define MAX_SHORTF 32767.0f
+#define MAX_SHORTF 4294967295.0f
 #define MAX_INTF 2147483647.0f 
 
 typedef UINT uint;
@@ -51,6 +50,8 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 
 /********** Structure Definitions******************/
 
+#include "Types.h" // float2, short2
+ 
 struct Attribs 
 {
 	ushort hasParent  : 1;
@@ -60,22 +61,23 @@ struct Attribs
 
 /********** Global Constants***********************/
 const uint g_numVerts = 500;
-const float g_tailDist = 0.001f;
+const float g_tailDist = 0.003f;
 const float g_speed = 0.3f; // in Screens per second
 
 /********** Globals Variables *********************/
 GLuint g_vboPos = 0;
-bool g_endgame = false;
 uint g_width = 1024;
 uint g_height = 768;
+
+bool g_endgame = false;
+short g_numActiveVerts = g_numVerts;
 
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
 short2  g_positions[g_numVerts] = {{1,1}};
 Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
 
 // 128k total memory. 
-// I think I can pack particle attributes into 6 bytes.
-// (We'll need to do some complex searching at chomp time, to avoid our tail)
+// I think I can pack particle attributes into 6 bytes. (2 shorts for pos, 1 short for target and state)
 // Targeting 16000 particles, that leaves 35072 bytes (34.25k)
 // Leave 4.25k for the .exe and extra .data
 // That's 30k for the spatial partioning scheme
@@ -87,6 +89,10 @@ Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
 // Then reduce the number of active bins every time we halve the number of active particles.
 // Well it's a start. That's 32000 bytes for spatial partitioning, plus 96000 for the particles = 128000. 
 // That leaves 3072 bytes for the .exe and extra .data. Close to doable!
+// But wait! We don't need to calculate everybody's nearest neighbor every frame,
+// If we save the targets, we can re-search every 4th or so frame (that's only 64ms, not human noticeable)
+// Then we only need a quarter of the binning space! Woo! 
+// So thats 4000 slots (1 short each) for 16000 particles. Which leaves 27072 bytes left over. Nice.
 short g_bins[16000];
 
 /**************************************************/
@@ -181,7 +187,7 @@ HRESULT FindNearestNeighbor(short i)
 			{
 				float diffx = g_positions[j].getX() - g_positions[i].getX();
 				float diffy = g_positions[j].getY() - g_positions[i].getY();
-				float dist = sqrt(diffx*diffx + diffy*diffy) / MAX_INTF;
+				float dist = sqrt(diffx*diffx + diffy*diffy);
 				if (dist < minDist)
 				{
 					minDist = dist;
@@ -207,18 +213,38 @@ HRESULT Chomp(short chomper)
 	{
 		g_attribs[chomper].hasParent = true;
 		g_attribs[target].hasChild = true;
+		--g_numActiveVerts;
 	}
 
 	return S_OK;
 }
 
-HRESULT Update(uint deltaTime)
+HRESULT Update(uint deltaTime, uint absoluteTime)
 {
 	HRESULT hr = S_OK;
 
 	// TODO: Optimize for data-drive design
 
 	// Sort into buckets
+	float aspect = g_width / float(g_height);
+	uint g_numSlots = 16000;
+	uint bucketStride = g_numSlots / g_numActiveVerts;
+	uint bucketCount = g_numSlots / bucketStride; // Not equal to g_numActiveVerts, it's integer division
+
+	// This wastes a lot of bins (the bin locations are outside positions range)
+	// TODO: Refactor for better use of bins
+	float bucketHeight = MAX_SHORTF / sqrt(float(bucketCount)); // in short space (0..MAX_SHORTF)
+	float bucketWidth = bucketHeight * aspect;
+
+	for (uint i = 0; i < g_numVerts; i++)
+	{
+		short bucketX = g_positions[i].x / bucketWidth;
+		short bucketY = g_positions[i].y / bucketHeight;
+
+		// TODO: Tile these. 2D Tiling? (3D?)
+		short bucket = bucketX + bucketY * ceilf(MAX_SHORTF/bucketWidth);
+		uint test = 0;
+	}
 
 	// Determine nearest neighbors
 	for (uint i = 0; i < g_numVerts; i++)
@@ -231,6 +257,8 @@ HRESULT Update(uint deltaTime)
 		// Get target vector
 		short target = g_attribs[i].targetID;
 		float2 targetVec;
+
+		// For optimal precision, pull our shorts into floats and do all math at full precision...
 		targetVec.x = g_positions[target].getX() - g_positions[i].getX();
 		targetVec.y = g_positions[target].getY() - g_positions[i].getY();
 
@@ -250,7 +278,7 @@ HRESULT Update(uint deltaTime)
 		else
 			offset = dir * g_speed * float(deltaTime)/1000000.0f;
 		
-		// Update positions
+		// ... then finally, at the verrrry end, stuff our FP floats into 16-bit shorts
 		g_positions[i].setX(g_positions[i].getX() + offset.x);
 		g_positions[i].setY(g_positions[i].getY() + offset.y);
 		
@@ -289,7 +317,7 @@ HRESULT CreateProgram(GLuint* program)
 		layout(location = 0) in vec4 position; \
 		void main() \
 		{ \
-			gl_Position = position; \
+			gl_Position = position * 2.0f - 1.0f; \
 		}";
 
 	const char* pixelShaderString = "\
@@ -392,7 +420,7 @@ HRESULT Init()
     glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
     glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
     glEnableVertexAttribArray(positionSlot);
-    glVertexAttribPointer(positionSlot, 2, GL_FLOAT, GL_TRUE, stride, 0);
+    glVertexAttribPointer(positionSlot, 2, GL_UNSIGNED_INT, GL_TRUE, stride, 0);
 
 Cleanup:
 	return hr;
@@ -503,7 +531,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 
 			if (g_endgame == false)
 			{
-				IFC( Update((uint) deltaTime));
+				IFC( Update((uint) deltaTime, (uint) elapsed) );
 			}
 			else
 			{

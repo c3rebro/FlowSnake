@@ -47,30 +47,24 @@ struct short2
 {
 	void setX(float a)
 	{
-		//x = int(a * MAX_SHORTF);
-		x=a;
+		x = uint(a * MAX_SHORTF);
 	}
 
 	void setY(float a)
 	{
-		//y = int(a * MAX_SHORTF);
-		y=a;
+		y = uint(a * MAX_SHORTF);
 	}
 
 	float getX()
 	{
-		//return x/MAX_SHORTF;
-		return x;
+		return x/MAX_SHORTF;
 	}
 
 	float getY()
 	{
-		//return y/MAX_SHORTF;
-		return y;
+		return y/MAX_SHORTF;
 	}
 
-	//short x;
-	//short y;
-	float x;
-	float y;
+	uint x;
+	uint y;
 };
