@@ -61,7 +61,7 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 2000;
+const uint g_numVerts = 1000;
 const uint g_numSlots = 8000;
 const float g_tailDist = 0.003f;
 const float g_speed = 0.1f; // in Screens per second
@@ -101,7 +101,7 @@ Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
 // If we save the targets, we can re-search every 4th or so frame (that's only 64ms, not human noticeable)
 // Then we only need a quarter of the binning space! Woo! 
 // So thats 4000 slots (1 short each) for 16000 particles. Which leaves 27072 bytes left over. Nice.
-ushort g_slots[g_numSlots];
+ushort g_slots[g_numSlots] = {0xFFFF};
 
 /**************************************************/
 
@@ -210,15 +210,16 @@ HRESULT FindNearestNeighborN2(short i)
 	if (g_attribs[i].hasParent == false) // Find the nearest potential parent
 	{
 		short nearest = -1;
-		float minDist = 1.0f;
+		__int64 minDist = MAX_SHORTF;
 
 		for (uint j = 0; j < g_numVerts; j++)
 		{
 			if (IsValidTarget(j, i))
 			{
-				float diffx = g_positions[j].getX() - g_positions[i].getX();
-				float diffy = g_positions[j].getY() - g_positions[i].getY();
-				float dist = sqrtf(diffx*diffx + diffy*diffy);
+				__int64 diffx = abs(int(g_positions[j].x - g_positions[i].x));
+				__int64 diffy = abs(int(g_positions[j].y - g_positions[i].y));
+				__int64 dist = diffx + diffy; // distance squared
+				ASSERT(dist >= 0); // dist < 0 means overflow
 				if (dist < minDist)
 				{
 					minDist = dist;
@@ -252,7 +253,7 @@ HRESULT FindNearestNeighbor(short index)
 	bins[3] = Bin(pos.x + offset.x, pos.y + offset.y);
 
 	// Find the closest target in these bins (if none is found, keep old target)
-	short minDist = MAX_SHORTF;
+	__int64 minDist = MAX_SHORTF;
 	ushort nearest = -1;
 	for (uint i = 0; i < 4; i++)
 	{
@@ -264,9 +265,10 @@ HRESULT FindNearestNeighbor(short index)
 			else if (IsValidTarget(target, index))
 			{
 				// TODO: Do this math in shorts
-				short diffx = g_positions[target].x - g_positions[index].x;
-				short diffy = g_positions[target].y - g_positions[index].y;
-				short dist = diffx + diffy; // Manhattan distance for now
+				__int64 diffx = abs(int(g_positions[target].x - g_positions[index].x));
+				__int64 diffy = abs(int(g_positions[target].y - g_positions[index].y));
+				__int64 dist = diffx + diffy; // distance squared
+				ASSERT(dist >= 0); // dist < 0 means overflow
 				if (dist < minDist)
 				{
 					minDist = dist;
