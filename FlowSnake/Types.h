@@ -1,6 +1,7 @@
 #define MAX_SSHORTF 32767.0f
-#define MAX_SHORTF 4294967295.0f
-#define MAX_INTF 2147483647.0f 
+#define MAX_USHORTF 65535.0f
+#define MAX_SINTF 2147483647.0f 
+#define MAX_UINTF 4294967295.0f 
 
 struct float2
 {
@@ -50,24 +51,24 @@ struct short2
 {
 	void setX(float a)
 	{
-		x = uint(a * MAX_SHORTF);
+		x = ushort(a * MAX_USHORTF + 0.5f);
 	}
 
 	void setY(float a)
 	{
-		y = uint(a * MAX_SHORTF);
+		y = ushort(a * MAX_USHORTF + 0.5f);
 	}
 
 	float getX()
 	{
-		return x/MAX_SHORTF;
+		return x/MAX_USHORTF;
 	}
 
 	float getY()
 	{
-		return y/MAX_SHORTF;
+		return y/MAX_USHORTF;
 	}
 
-	uint x;
-	uint y;
+	ushort x;
+	ushort y;
 };

@@ -59,7 +59,7 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 8000;
+const uint g_numVerts = 16000;
 const uint g_numSlots = 8000;
 const float g_tailDist = 0.001f;
 const float g_speed = 0.1f; // in Screens per second
@@ -257,7 +257,7 @@ HRESULT FindNearestNeighbor(short index)
 	int xrange[2] = {pos.x/g_binNWidth - 0.5, pos.x/g_binNWidth + 0.5};
 	int yrange[2] = {pos.y/g_binNHeight - 0.5, pos.y/g_binNHeight + 0.5};
 
-	__int64 minDist = MAX_SHORTF;
+	__int64 minDist = MAX_UINTF;
 	ushort nearest = -1;
 	int bin;
 	do {
@@ -530,7 +530,7 @@ HRESULT Init()
     glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
     glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
     glEnableVertexAttribArray(positionSlot);
-    glVertexAttribPointer(positionSlot, 2, GL_UNSIGNED_INT, GL_TRUE, stride, 0);
+    glVertexAttribPointer(positionSlot, 2, GL_UNSIGNED_SHORT, GL_TRUE, stride, 0);
 
 Cleanup:
 	return hr;
