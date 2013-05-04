@@ -24,6 +24,7 @@ typedef unsigned short ushort;
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
+float SmoothStep(float a, float b, float t);
 void Error(const char* pStr, ...);
 float frand();
 short srand();
@@ -69,10 +70,10 @@ GLuint g_vboPos = 0;
 uint g_width = 1024;
 uint g_height = 768;
 
-uint g_numBinUpdates = 4; // We only update 1/g_numBinUpdates bins each frame
-uint g_binUpdateIter = 0; // The current group of buckets to update (incremented every Update())
-int g_binRangeX[2]; // The inclusive range of bins (X dimension) that are backed by memory (and thus able to add nodes)
-int g_binRangeY[2]; // The inclusive range of bins (Y dimension) that are backed by memory (and thus able to add nodes)
+uint g_numBinSplits = 4; // Divide the bins g_numBinSplits times in each dimension. Each bin group is updated periodically.
+uint g_binUpdateIter = 0; // The current bin group to update (incremented every Update())
+int g_binRangeX[2]; // The inclusive range of bins (X dimension) that are backed by memory (the active bin group)
+int g_binRangeY[2]; // The inclusive range of bins (Y dimension) that are backed by memory (the active bin group)
 
 uint g_binStride;	// Number of slots per bin. Each slot holds an index to a node
 uint g_binCountX;	// Number of bins in the X dimension needed to fill the screen
@@ -125,11 +126,6 @@ inline bool IsValidTarget(short target, short current)
 	}
 
 	return true;
-}
-
-float SmoothStep(float a, float b, float t)
-{
-	return a + (pow(t,2)*(3-2*t))*(b - a);
 }
 
 HRESULT EndgameUpdate(uint deltaTime)
@@ -233,12 +229,12 @@ HRESULT Bin(float posx, float posy, int* bin)
 	return Bin(bucketX, bucketY, bin);
 }
 
-inline __int64 Distance(short2 current, short2 target)
+inline int Distance(short2 current, short2 target)
 {
 	// TODO: Do this math in shorts
-	__int64 diffx = abs(int(current.x - target.x));
-	__int64 diffy = abs(int(current.y - target.y));
-	__int64 dist = diffx + diffy; // Manhattan distance
+	int diffx = abs(int(current.x - target.x));
+	int diffy = abs(int(current.y - target.y));
+	int dist = diffx + diffy; // Manhattan distance
 	ASSERT(dist >= 0); // dist < 0 means overflow
 	return dist;
 }
@@ -324,12 +320,12 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	g_binCountX  = ceilf(1.0f / g_binNWidth)+2;  // TODO: If we clamp all positions passed to Bin(), this could be +1
 	g_binCountY  = ceilf(1.0f / g_binNHeight)+2;
 
-	uint xiter = g_binUpdateIter % g_numBinUpdates;
-	uint yiter = g_binUpdateIter / g_numBinUpdates;
-	g_binRangeX[0] = (g_binCountX * xiter/g_numBinUpdates)		 - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
-	g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinUpdates - 1) + 1;	// This buffer layer will be overlap for each quadrant
-	g_binRangeY[0] = (g_binCountY * yiter/g_numBinUpdates)		 - 1;	// But without it verts would only target verts in their quadrant
-	g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinUpdates - 1) + 1;
+	uint xiter = g_binUpdateIter % g_numBinSplits;
+	uint yiter = g_binUpdateIter / g_numBinSplits;
+	g_binRangeX[0] = (g_binCountX * xiter/g_numBinSplits)		  - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
+	g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinSplits - 1) + 1;	// This buffer layer will be overlap for each quadrant
+	g_binRangeY[0] = (g_binCountY * yiter/g_numBinSplits)		  - 1;	// But without it verts would only target verts in their quadrant
+	g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinSplits - 1) + 1;
 	g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
 
 	// TODO: Not this! Inefficient
@@ -354,7 +350,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 
 		// TODO: What if all slots in the bin are full
 	}
-	g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinUpdates*g_numBinUpdates);
+	g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinSplits*g_numBinSplits);
 
 	// Determine nearest neighbors
 	for (uint i = 0; i < g_numVerts; i++)
@@ -362,6 +358,8 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 		IFC( FindNearestNeighbor(i) );
 	}
 
+	// TODO: Organize the nodes of a snake linearly in memory
+	// TODO: Try zipping the attribute and position buffers
 	for (uint i = 0; i < g_numVerts; i++)
 	{
 		// Get target vector
@@ -515,11 +513,6 @@ HRESULT Init()
 	{
 		g_positions[i].setX(frand()*2 - 1);
 		g_positions[i].setY(frand()*2 - 1);
-	}
-
-	// Initilialize our node attributes
-	for (uint i = 0; i < g_numVerts; i++)
-	{
 	}
 
 	// Initialize buffers
@@ -682,6 +675,41 @@ LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
+int testMain (int argc, char* argv[])
+{
+    LARGE_INTEGER freqTime;
+	LARGE_INTEGER previousTime;
+    LARGE_INTEGER currentTime;
+	__int64 aveDeltaTime = 0;
+	uint numUpdateLoops = 1000;
+	
+    QueryPerformanceFrequency(&freqTime);
+    QueryPerformanceCounter(&previousTime);
+
+	for (uint i = 0; i < numUpdateLoops; i++)
+	{
+		QueryPerformanceCounter(&previousTime);
+		Update(16000, 0);
+		QueryPerformanceCounter(&currentTime);
+
+		if (i >= 100) // Skip the first c iterations to warm it up a bit
+			aveDeltaTime += currentTime.QuadPart - previousTime.QuadPart;
+		
+		// Reset the sim
+		for (uint i = 0; i < g_numVerts; i++)
+		{
+			g_positions[i].setX(frand()*2 - 1);
+			g_positions[i].setY(frand()*2 - 1);
+		}
+		memset(g_attribs, 0, sizeof(g_attribs));
+	}
+
+	double deltaTimeSeconds = double(aveDeltaTime) / (numUpdateLoops * freqTime.QuadPart);
+	printf("Average frame duration = %.3f ms\n", deltaTimeSeconds * 1000.0f); 
+
+	return 0;
+}
+
 void Error(const char* pStr, ...)
 {
     char msg[1024] = {0};
@@ -707,37 +735,8 @@ float frand()
 	return float(srand()/RAND_MAX); 
 }
 
-int testMain (int argc, char* argv[])
+// Smoothly blend between a and b based on t
+float SmoothStep(float a, float b, float t)
 {
-    LARGE_INTEGER freqTime;
-	LARGE_INTEGER previousTime;
-    LARGE_INTEGER currentTime;
-	__int64 aveDeltaTime = 0;
-	uint numUpdateLoops = 1;
-	
-    QueryPerformanceFrequency(&freqTime);
-    QueryPerformanceCounter(&previousTime);
-
-	for (uint i = 0; i < numUpdateLoops; i++)
-	{
-		QueryPerformanceCounter(&previousTime);
-		Update(16000, 0);
-		QueryPerformanceCounter(&currentTime);
-
-		if (i >= 3) // Skip the first c iterations to warm it up a bit
-			aveDeltaTime = currentTime.QuadPart - previousTime.QuadPart;
-		
-		// Reset the sim
-		for (uint i = 0; i < g_numVerts; i++)
-		{
-			g_positions[i].setX(frand()*2 - 1);
-			g_positions[i].setY(frand()*2 - 1);
-		}
-		memset(g_attribs, 0, sizeof(g_attribs));
-	}
-
-	double deltaTimeSeconds = double(aveDeltaTime) / (numUpdateLoops * freqTime.QuadPart);
-	printf("Average frame duration = %.3f ms\n", deltaTimeSeconds * 1000.0f); 
-
-	return 0;
+	return a + (pow(t,2)*(3-2*t))*(b - a);
 }
