@@ -59,9 +59,9 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 16000;
-const uint g_numSlots = 32000;
-const float g_tailDist = 0.003f;
+const uint g_numVerts = 8000;
+const uint g_numSlots = 8000;
+const float g_tailDist = 0.001f;
 const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
@@ -71,6 +71,8 @@ uint g_height = 768;
 
 uint g_numBinUpdates = 4; // We only update 1/g_numBinUpdates bins each frame
 uint g_binUpdateIter = 0; // The current group of buckets to update (incremented every Update())
+int g_binRangeX[2]; // The inclusive range of bins (X dimension) that are backed by memory (and thus able to add nodes)
+int g_binRangeY[2]; // The inclusive range of bins (Y dimension) that are backed by memory (and thus able to add nodes)
 
 uint g_binStride;	// Number of slots per bin. Each slot holds an index to a node
 uint g_binCountX;	// Number of bins in the X dimension needed to fill the screen
@@ -206,33 +208,66 @@ HRESULT Chomp(short chomper)
 	return S_OK;
 }
 
-uint Bin(float posx, float posy)
+HRESULT Bin(int binX, int binY, int* bin)
 {
-	ushort bucketX = ushort(posx / g_binNWidth);
-	ushort bucketY = ushort(posy / g_binNHeight);
-
 	// TODO: Tile these. 2D Tiling? (3D?)
-	return bucketX + bucketY * g_binCountX;
+	if (bin) *bin = (binX - g_binRangeX[0]) + (binY - g_binRangeY[0]) * (g_binRangeX[1] - g_binRangeX[0]+1);
+
+	// Return S_FALSE if this bin is on the outside edge (the buffer zone)
+	//		  E_FAIL if the bin is outside the mem mapped zone
+	//		  S_OK if it is inside
+	if (binX < g_binRangeX[0] || binX > g_binRangeX[1] ||
+		binY < g_binRangeY[0] || binY > g_binRangeY[1] ) 
+		return E_FAIL;
+	if (binX == g_binRangeX[0] || binX == g_binRangeX[1] ||
+		binY == g_binRangeY[0] || binY == g_binRangeY[1])
+		return S_FALSE;
+	else
+		return S_OK;
+}
+
+HRESULT Bin(float posx, float posy, int* bin)
+{
+	int bucketX = uint(posx / g_binNWidth);
+	int bucketY = uint(posy / g_binNHeight);
+	return Bin(bucketX, bucketY, bin);
+}
+
+inline __int64 Distance(short2 current, short2 target)
+{
+	// TODO: Do this math in shorts
+	__int64 diffx = abs(int(current.x - target.x));
+	__int64 diffy = abs(int(current.y - target.y));
+	__int64 dist = diffx + diffy; // Manhattan distance
+	ASSERT(dist >= 0); // dist < 0 means overflow
+	return dist;
 }
 
 HRESULT FindNearestNeighbor(short index)
 {
+	HRESULT hr = S_OK;
+	
 	if (g_attribs[index].hasParent == true)
 		return S_FALSE;
 
 	float2 pos = {g_positions[index].getX(), g_positions[index].getY()};
+	if (Bin(pos.x, pos.y, nullptr) != S_OK)
+		return S_FALSE; // if we're not in a bin backed by memory, just keep our old neighbor
 
-	uint xrange[2] = {pos.x/g_binNWidth - 0.5, pos.x/g_binNWidth + 0.5};
-	uint yrange[2] = {pos.y/g_binNHeight - 0.5, pos.y/g_binNHeight + 0.5};
+	int xrange[2] = {pos.x/g_binNWidth - 0.5, pos.x/g_binNWidth + 0.5};
+	int yrange[2] = {pos.y/g_binNHeight - 0.5, pos.y/g_binNHeight + 0.5};
 
 	__int64 minDist = MAX_SHORTF;
 	ushort nearest = -1;
+	int bin;
 	do {
-		for (uint y = yrange[0]; y <= yrange[1]; y++)
+		for (int y = yrange[0]; y <= yrange[1]; y++)
 		{
-			for (uint x = xrange[0]; x <= xrange[1]; x++)
+			for (int x = xrange[0]; x <= xrange[1]; x++)
 			{
-				uint bin = x + y * g_binCountX;
+				hr = Bin(x, y, &bin);
+				ASSERT(SUCCEEDED(hr)); // Bin fails if the bin isn't memory backed.
+
 				for (uint slot = 0; slot < g_binStride; slot++)
 				{
 					// TODO: These large strides are going to kill the cache! 
@@ -243,11 +278,7 @@ HRESULT FindNearestNeighbor(short index)
 						break;
 					else if (IsValidTarget(target, index))
 					{
-						// TODO: Do this math in shorts
-						__int64 diffx = abs(int(g_positions[target].x - g_positions[index].x));
-						__int64 diffy = abs(int(g_positions[target].y - g_positions[index].y));
-						__int64 dist = diffx + diffy; // distance squared
-						ASSERT(dist >= 0); // dist < 0 means overflow
+						__int64 dist = Distance(g_positions[index], g_positions[target]);
 						if (dist < minDist)
 						{
 							minDist = dist;
@@ -257,13 +288,19 @@ HRESULT FindNearestNeighbor(short index)
 				}
 			}
 		}
-		if (xrange[0] > 0) xrange[0]--;
-		if (yrange[0] > 0) yrange[0]--;
-		if (xrange[1] < g_binCountX) xrange[1]++;
-		if (yrange[1] < g_binCountY) yrange[1]++;
+		if (xrange[0] > g_binRangeX[0]) xrange[0]--;
+		if (xrange[1] < g_binRangeX[1]) xrange[1]++;
+		if (yrange[0] > g_binRangeY[0]) yrange[0]--;
+		if (yrange[1] < g_binRangeY[1]) yrange[1]++;
+
+		// Do we need this? Could happen if a vert is in a quadrant of it's own
+		if (xrange[1] - xrange[0] == g_binRangeX[1] - g_binRangeX[0] && 
+			yrange[1] - yrange[0] == g_binRangeY[1] - g_binRangeY[0])
+			break;
+
 	} while (nearest == ushort(-1));
 
-	g_attribs[index].targetID = nearest;
+	if (nearest != ushort(-1)) g_attribs[index].targetID = nearest;
 
 	return S_OK;
 }
@@ -278,7 +315,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	// TODO: Optimize for cache coherency
 
 	// Sort into buckets
-	float pixelsPerVert = (g_width * g_height) / g_numActiveVerts;
+	float pixelsPerVert = float((g_width * g_height) / g_numActiveVerts);
 	float binDiameterPixels = sqrtf(pixelsPerVert); // conservative
 	
 	g_binNHeight = binDiameterPixels / g_height;
@@ -286,15 +323,24 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 
 	g_binCountX  = ceilf(1.0f / g_binNWidth)+2;  // TODO: If we clamp all positions passed to Bin(), this could be +1
 	g_binCountY  = ceilf(1.0f / g_binNHeight)+2;
-	g_binStride  = g_numSlots / (g_binCountX * g_binCountY);
+
+	uint xiter = g_binUpdateIter % g_numBinUpdates;
+	uint yiter = g_binUpdateIter / g_numBinUpdates;
+	g_binRangeX[0] = (g_binCountX * xiter/g_numBinUpdates)		 - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
+	g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinUpdates - 1) + 1;	// This buffer layer will be overlap for each quadrant
+	g_binRangeY[0] = (g_binCountY * yiter/g_numBinUpdates)		 - 1;	// But without it verts would only target verts in their quadrant
+	g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinUpdates - 1) + 1;
+	g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
 
 	// TODO: Not this! Inefficient
+	int bin;
 	memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		if (g_attribs[i].hasChild == true) continue;
-
-		uint bin = Bin(g_positions[i].getX(), g_positions[i].getY());
+		if (g_attribs[i].hasChild == true) continue; // Only bin the chompable tails
+		hr = Bin(g_positions[i].getX(), g_positions[i].getY(), &bin);
+		if (FAILED(hr)) // If this bin isn't backed by memory, don't use it
+			continue;
 
 		// Find first empty bin slot
 		for (uint slot = 0; slot < g_binStride; slot++) 
@@ -308,6 +354,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 
 		// TODO: What if all slots in the bin are full
 	}
+	g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinUpdates*g_numBinUpdates);
 
 	// Determine nearest neighbors
 	for (uint i = 0; i < g_numVerts; i++)
