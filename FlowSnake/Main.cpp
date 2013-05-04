@@ -61,7 +61,7 @@ struct Attribs
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
 const uint g_numSlots = 8000;
-const float g_tailDist = 0.001f;
+const float g_tailDist = 0.0001f;
 const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
