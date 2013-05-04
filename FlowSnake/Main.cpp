@@ -18,6 +18,7 @@
 
 #define E_NOTARGETS 0x8000000f
 #define EMPTY_SLOT 0xffff
+#define MAX_SSHORTF 32767.0f
 #define MAX_SHORTF 4294967295.0f
 #define MAX_INTF 2147483647.0f 
 
@@ -61,8 +62,8 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 4000;
-const uint g_numSlots = 8000;
+const uint g_numVerts = 2000;
+const uint g_numSlots = 4000;
 const float g_tailDist = 0.003f;
 const float g_speed = 0.1f; // in Screens per second
 
@@ -132,53 +133,62 @@ float SmoothStep(float a, float b, float t)
 
 HRESULT EndgameUpdate(uint deltaTime)
 {
-	//static uint absoluteTime = 0;
-	//const float timeLimit = 5000000.0f; // 5 seconds
+	static short* velocityBuf = (short*)g_slots;
+	static const uint numVels = g_numSlots/2;
+	static uint absoluteTime = 0;
+	const float timeLimit = 5000000.0f; // 5 seconds
 
-	//absoluteTime += deltaTime;
+	absoluteTime += deltaTime;
 
-	//for (uint i = 0; i < g_numVerts; i++)
-	//{	
-	//	if (g_positions[i].x > 1.0f || g_positions[i].x < 0.0f)
-	//		g_vectors[i].x = -g_vectors[i].x;
-	//	if (g_positions[i].y > 1.0f || g_positions[i].y < 0.0f)
-	//		g_vectors[i].y = -g_vectors[i].y;
+	for (uint i = 0; i < g_numVerts; i++)
+	{	
+		/*if (g_positions[i].x > 1.0f || g_positions[i].x < 0.0f)
+			g_vectors[i].x = -g_vectors[i].x;
+		if (g_positions[i].y > 1.0f || g_positions[i].y < 0.0f)
+			g_vectors[i].y = -g_vectors[i].y;*/
 
-	//	float velx = SmoothStep(g_vectors[i].x, 0.0f, float(absoluteTime)/timeLimit);
-	//	float vely = SmoothStep(g_vectors[i].y, 0.0f, float(absoluteTime)/timeLimit);
+		float velx = velocityBuf[2*(i%numVels)] / MAX_SSHORTF;
+		float vely = velocityBuf[2*(i%numVels)+1] / MAX_SSHORTF;
 
-	//	g_positions[i].x += + velx * float(deltaTime)/1000000.0f;
-	//	g_positions[i].y += + vely * float(deltaTime)/1000000.0f;
-	//}
+		velx = SmoothStep(velx, 0.0f, float(absoluteTime)/timeLimit);
+		vely = SmoothStep(vely, 0.0f, float(absoluteTime)/timeLimit);
 
-	//if (absoluteTime > timeLimit)
-	//{
-	//	g_endgame = false;
-	//	absoluteTime = 0;
+		g_positions[i].setX(g_positions[i].getX() + velx * float(deltaTime)/1000000.0f);
+		g_positions[i].setY(g_positions[i].getY() + vely * float(deltaTime)/1000000.0f);
+	}
 
-	//	for (uint i = 0; i < g_numVerts; i++)
-	//	{
-	//		g_hasParent[i] = false;
-	//		g_hasChild[i] = false;
-	//	}
-	//}
+	if (absoluteTime > timeLimit)
+	{
+		g_endgame = false;
+		g_numActiveVerts = g_numVerts;
+		absoluteTime = 0;
+
+		for (uint i = 0; i < g_numVerts; i++)
+		{
+			g_attribs[i].hasChild = false;
+			g_attribs[i].hasParent = false;
+		}
+	}
 
 	return S_OK;
 }
 
 HRESULT Endgame()
 {
-	//g_endgame = true;
+	static short* velocityBuf = (short*)g_slots;
+	static const uint numVels = g_numSlots/2;
+
+	g_endgame = true;
 
 	//// TODO: Add "shaking" before we explode. The snake should continue
 	////		 to swim along, then start vibrating, then EXPLODE.
 
-	//for (uint i = 0; i < g_numVerts; i++)
-	//{
-	//	float maxVelocity = 0.5f; // screens per second
-	//	g_vectors[i].x = (rand()*2.0f - 1.0f) * maxVelocity;
-	//	g_vectors[i].y = (rand()*2.0f - 1.0f) * maxVelocity;
-	//}
+	for (uint i = 0; i < numVels; i++)
+	{
+		float maxVelocity = MAX_SSHORTF * 0.5f; // screens per second in signed short space
+		velocityBuf[2*i] = (frand()*2.0f - 1.0f) * maxVelocity;
+		velocityBuf[2*i+1] = (frand()*2.0f - 1.0f) * maxVelocity;
+	}
 
 	return S_OK;
 }
@@ -217,8 +227,8 @@ HRESULT FindNearestNeighborN2(short i)
 		{
 			if (IsValidTarget(j, i))
 			{
-				__int64 diffx = abs(int(g_positions[j].x - g_positions[i].x));
-				__int64 diffy = abs(int(g_positions[j].y - g_positions[i].y));
+				__int64 diffx = abs(int(g_positions[j].x*0.5f - g_positions[i].x*0.5f));
+				__int64 diffy = abs(int(g_positions[j].y*0.5f - g_positions[i].y*0.5f));
 				__int64 dist = diffx + diffy; // distance squared
 				ASSERT(dist >= 0); // dist < 0 means overflow
 				if (dist < minDist)
@@ -288,6 +298,9 @@ HRESULT FindNearestNeighbor(short index)
 HRESULT Update(uint deltaTime, uint absoluteTime)
 {
 	HRESULT hr = S_OK;
+
+	if (g_endgame)
+		return EndgameUpdate((uint) deltaTime);
 
 	// TODO: Optimize for data-drive design
 
@@ -362,8 +375,8 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	}
 
 Cleanup:
-	if (hr == E_NOTARGETS)
-		return Endgame();
+	if (g_numActiveVerts == 1)
+		Endgame();
 
 	return hr;
 }
@@ -603,14 +616,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 			aveDeltaTime = aveDeltaTime * 0.9 + 0.1 * deltaTime;
             previousTime = currentTime;
 
-			if (g_endgame == false)
-			{
-				IFC( Update((uint) deltaTime, (uint) elapsed) );
-			}
-			else
-			{
-				IFC( EndgameUpdate((uint) deltaTime));
-			}
+			IFC( Update((uint) deltaTime, (uint) elapsed) );
 
 			Render();
             SwapBuffers(hDC);
