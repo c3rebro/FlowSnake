@@ -1,3 +1,6 @@
+#define MAX_SSHORTF 32767.0f
+#define MAX_SHORTF 4294967295.0f
+#define MAX_INTF 2147483647.0f 
 
 struct float2
 {

@@ -18,9 +18,6 @@
 
 #define E_NOTARGETS 0x8000000f
 #define EMPTY_SLOT 0xffff
-#define MAX_SSHORTF 32767.0f
-#define MAX_SHORTF 4294967295.0f
-#define MAX_INTF 2147483647.0f 
 
 typedef UINT uint;
 typedef unsigned short ushort;
@@ -62,8 +59,8 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 2000;
-const uint g_numSlots = 4000;
+const uint g_numVerts = 4000;
+const uint g_numSlots = 8000;
 const float g_tailDist = 0.003f;
 const float g_speed = 0.1f; // in Screens per second
 
@@ -73,6 +70,8 @@ uint g_width = 1024;
 uint g_height = 768;
 
 uint g_numBinUpdates = 4; // We only update 1/g_numBinUpdates bins each frame
+uint g_binUpdateIter = 0; // The current group of buckets to update (incremented every Update())
+
 uint g_binStride;	// Number of slots per bin. Each slot holds an index to a node
 uint g_binCountX;	// Number of bins in the X dimension needed to fill the screen
 uint g_binCountY;	// Number of bins in the X dimension needed to fill the screen
@@ -302,7 +301,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	if (g_endgame)
 		return EndgameUpdate((uint) deltaTime);
 
-	// TODO: Optimize for data-drive design
+	// TODO: Optimize for cache coherency
 
 	// Sort into buckets
 	float pixelsPerVert = (g_width * g_height) / g_numActiveVerts;
@@ -310,7 +309,8 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	
 	g_binNHeight = binDiameterPixels / g_height;
 	g_binNWidth  = binDiameterPixels / g_width;
-	g_binCountX  = ceilf(1.0f / g_binNWidth)+2;
+
+	g_binCountX  = ceilf(1.0f / g_binNWidth)+2;  // TODO: If we clamp all positions passed to Bin(), this could be +1
 	g_binCountY  = ceilf(1.0f / g_binNHeight)+2;
 	g_binStride  = g_numSlots / (g_binCountX * g_binCountY);
 
@@ -318,6 +318,8 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
 	for (uint i = 0; i < g_numVerts; i++)
 	{
+		if (g_attribs[i].hasChild == true) continue;
+
 		uint bin = Bin(g_positions[i].getX(), g_positions[i].getY());
 
 		// Find first empty bin slot
@@ -682,4 +684,39 @@ float frand()
 {
 	#define RAND_MAX 32767.0f
 	return float(srand()/RAND_MAX); 
+}
+
+int testMain (int argc, char* argv[])
+{
+    LARGE_INTEGER freqTime;
+	LARGE_INTEGER previousTime;
+    LARGE_INTEGER currentTime;
+	__int64 aveDeltaTime = 0;
+	uint numUpdateLoops = 10;
+	
+    QueryPerformanceFrequency(&freqTime);
+    QueryPerformanceCounter(&previousTime);
+
+	for (uint i = 0; i < numUpdateLoops; i++)
+	{
+		QueryPerformanceCounter(&previousTime);
+		Update(16000, 0);
+		QueryPerformanceCounter(&currentTime);
+
+		if (i >= 3) // Skip the first c iterations to warm it up a bit
+			aveDeltaTime = currentTime.QuadPart - previousTime.QuadPart;
+		
+		// Reset the sim
+		for (uint i = 0; i < g_numVerts; i++)
+		{
+			g_positions[i].setX(frand()*2 - 1);
+			g_positions[i].setY(frand()*2 - 1);
+		}
+		memset(g_attribs, 0, sizeof(g_attribs));
+	}
+
+	double deltaTimeSeconds = double(aveDeltaTime) / (numUpdateLoops * freqTime.QuadPart);
+	printf("Average frame duration = %.3f ms\n", deltaTimeSeconds * 1000.0f); 
+
+	return 0;
 }
