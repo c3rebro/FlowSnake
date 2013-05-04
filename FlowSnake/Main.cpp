@@ -59,8 +59,8 @@ struct Attribs
 };
 
 /********** Global Constants***********************/
-const uint g_numVerts = 4000;
-const uint g_numSlots = 8000;
+const uint g_numVerts = 16000;
+const uint g_numSlots = 32000;
 const float g_tailDist = 0.003f;
 const float g_speed = 0.1f; // in Screens per second
 
@@ -215,38 +215,6 @@ uint Bin(float posx, float posy)
 	return bucketX + bucketY * g_binCountX;
 }
 
-HRESULT FindNearestNeighborN2(short i)
-{
-	if (g_attribs[i].hasParent == false) // Find the nearest potential parent
-	{
-		short nearest = -1;
-		__int64 minDist = MAX_SHORTF;
-
-		for (uint j = 0; j < g_numVerts; j++)
-		{
-			if (IsValidTarget(j, i))
-			{
-				__int64 diffx = abs(int(g_positions[j].x*0.5f - g_positions[i].x*0.5f));
-				__int64 diffy = abs(int(g_positions[j].y*0.5f - g_positions[i].y*0.5f));
-				__int64 dist = diffx + diffy; // distance squared
-				ASSERT(dist >= 0); // dist < 0 means overflow
-				if (dist < minDist)
-				{
-					minDist = dist;
-					nearest = j;
-				}
-			}
-		}
-
-		if (nearest == -1)
-			return E_NOTARGETS;
-
-		g_attribs[i].targetID = nearest;
-	}
-
-	return S_OK;
-}
-
 HRESULT FindNearestNeighbor(short index)
 {
 	if (g_attribs[index].hasParent == true)
@@ -254,42 +222,48 @@ HRESULT FindNearestNeighbor(short index)
 
 	float2 pos = {g_positions[index].getX(), g_positions[index].getY()};
 
-	// Search the four nearest bins
-	float2 offset = {g_binNWidth * 0.5f, g_binNHeight * 0.5f};
-	uint bins[4];
-	bins[0] = Bin(pos.x - offset.x, pos.y - offset.y);
-	bins[1] = Bin(pos.x + offset.x, pos.y - offset.y);
-	bins[2] = Bin(pos.x - offset.x, pos.y + offset.y);
-	bins[3] = Bin(pos.x + offset.x, pos.y + offset.y);
+	uint xrange[2] = {pos.x/g_binNWidth - 0.5, pos.x/g_binNWidth + 0.5};
+	uint yrange[2] = {pos.y/g_binNHeight - 0.5, pos.y/g_binNHeight + 0.5};
 
-	// Find the closest target in these bins (if none is found, keep old target)
 	__int64 minDist = MAX_SHORTF;
 	ushort nearest = -1;
-	for (uint i = 0; i < 4; i++)
-	{
-		for (uint slot = 0; slot < g_binStride; slot++)
+	do {
+		for (uint y = yrange[0]; y <= yrange[1]; y++)
 		{
-			ushort target = g_slots[bins[i]*g_binStride + slot];
-			if (target == EMPTY_SLOT)
-				break;
-			else if (IsValidTarget(target, index))
+			for (uint x = xrange[0]; x <= xrange[1]; x++)
 			{
-				// TODO: Do this math in shorts
-				__int64 diffx = abs(int(g_positions[target].x - g_positions[index].x));
-				__int64 diffy = abs(int(g_positions[target].y - g_positions[index].y));
-				__int64 dist = diffx + diffy; // distance squared
-				ASSERT(dist >= 0); // dist < 0 means overflow
-				if (dist < minDist)
+				uint bin = x + y * g_binCountX;
+				for (uint slot = 0; slot < g_binStride; slot++)
 				{
-					minDist = dist;
-					nearest = target;
+					// TODO: These large strides are going to kill the cache! 
+					//		 We should probably switch to storing the node indexes linearly with the MSb denoting end of bucket
+					//		 Then we'd have a separate table to index into this based on bucket
+					ushort target = g_slots[bin*g_binStride + slot];
+					if (target == EMPTY_SLOT)
+						break;
+					else if (IsValidTarget(target, index))
+					{
+						// TODO: Do this math in shorts
+						__int64 diffx = abs(int(g_positions[target].x - g_positions[index].x));
+						__int64 diffy = abs(int(g_positions[target].y - g_positions[index].y));
+						__int64 dist = diffx + diffy; // distance squared
+						ASSERT(dist >= 0); // dist < 0 means overflow
+						if (dist < minDist)
+						{
+							minDist = dist;
+							nearest = target;
+						}
+					}
 				}
 			}
 		}
-	}
+		if (xrange[0] > 0) xrange[0]--;
+		if (yrange[0] > 0) yrange[0]--;
+		if (xrange[1] < g_binCountX) xrange[1]++;
+		if (yrange[1] < g_binCountY) yrange[1]++;
+	} while (nearest == ushort(-1));
 
-	if (nearest != ushort(-1)) g_attribs[index].targetID = nearest;
-	FindNearestNeighborN2(index); // We failed, revert to n^2 method
+	g_attribs[index].targetID = nearest;
 
 	return S_OK;
 }
@@ -692,7 +666,7 @@ int testMain (int argc, char* argv[])
 	LARGE_INTEGER previousTime;
     LARGE_INTEGER currentTime;
 	__int64 aveDeltaTime = 0;
-	uint numUpdateLoops = 10;
+	uint numUpdateLoops = 1;
 	
     QueryPerformanceFrequency(&freqTime);
     QueryPerformanceCounter(&previousTime);
