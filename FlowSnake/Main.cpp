@@ -56,7 +56,7 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
 const uint g_numSlots = 8000;
-const float g_tailDist = 0.0001f;
+const float g_tailDist = 0.001f;
 const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
@@ -291,6 +291,24 @@ HRESULT FindNearestNeighbor(short index)
 	} while (nearest == ushort(-1));
 
 	if (nearest != ushort(-1)) g_attribs[index].targetID = nearest;
+	else if (IsValidTarget(g_attribs[index].targetID, index) == false)
+	{
+		// If our current target is invalid, and we weren't able to find a new one, we'll have to revert to N^2
+		for (uint i = 0; i < g_numVerts; i++)
+		{
+			if (IsValidTarget(i, index))
+			{
+				__int64 dist = Distance(g_positions[index], g_positions[i]);
+				if (dist < minDist)
+				{
+					minDist = dist;
+					nearest = i;
+				}
+			}
+		}
+		ASSERT(nearest != -1);
+		g_attribs[index].targetID = nearest;
+	}
 	
 	return S_OK;
 }
