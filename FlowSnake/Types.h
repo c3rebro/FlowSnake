@@ -25,6 +25,11 @@ struct float2
 			return sqrt(x*x + y*y);
 	}
 
+	bool operator< (float2 a)
+	{
+		return (x*x + y*y) < (a.x*a.x + a.y*a.y);
+	}
+
 	float2 operator- (float2 a)
 	{
 		float2 ret = {x - a.x, y - a.y};

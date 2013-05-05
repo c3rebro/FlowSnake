@@ -42,7 +42,7 @@ int testMain (int argc, char* argv[])
 	double aveNN = 0;
 	double avePos = 0;
 
-	uint numUpdateLoops = 1000;
+	uint numUpdateLoops = 100;
 	
     QueryPerformanceFrequency(&freqTime);
 

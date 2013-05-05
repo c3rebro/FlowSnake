@@ -56,7 +56,7 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
 const uint g_numSlots = 8000;
-const float g_tailDist = 0.001f;
+const float g_tailDist = 0.0001f;
 const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
@@ -402,7 +402,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 			offset = targetVec - dir * parentPaddingRadius;
 		}
 		else
-			offset = dir * g_speed * float(deltaTime)/1000000.0f;
+			offset = min(targetVec, dir * g_speed * float(deltaTime)/1000000.0f);
 		
 		// ... then finally, at the verrrry end, stuff our FP floats into 16-bit shorts
 		g_positions[i].setX(g_positions[i].getX() + offset.x);
