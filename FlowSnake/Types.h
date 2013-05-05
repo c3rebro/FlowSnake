@@ -3,6 +3,9 @@
 #define MAX_SINTF 2147483647.0f 
 #define MAX_UINTF 4294967295.0f 
 
+typedef UINT uint;
+typedef unsigned short ushort;
+
 struct float2
 {
 	float x;
@@ -71,4 +74,11 @@ struct short2
 
 	ushort x;
 	ushort y;
+};
+
+struct Attribs 
+{
+	ushort hasParent  : 1;
+	ushort hasChild   : 1;
+	ushort targetID : 14;
 };

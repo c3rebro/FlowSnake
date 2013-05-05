@@ -4,7 +4,14 @@
 #include <math.h>  // sqrt
 #include <stdio.h> // _vsnwprintf_s. Can disable for Release
 #include "glext.h" // glGenBuffers, glBindBuffers, ...
+#include "Types.h" // float2, short2, Attribs
 
+#ifdef _TEST
+#	include "Test.h"
+#else
+#	define BeginCounter(x)
+#	define EndCounter(x)
+#endif
 
 /********** Defines *******************************/
 #define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
@@ -18,9 +25,6 @@
 
 #define E_NOTARGETS 0x8000000f
 #define EMPTY_SLOT 0xffff
-
-typedef UINT uint;
-typedef unsigned short ushort;
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
@@ -48,16 +52,6 @@ PFNGLSHADERSOURCEPROC glShaderSource;
 PFNGLCOMPILESHADERPROC glCompileShader;
 PFNGLGETSHADERIVPROC glGetShaderiv;
 
-/********** Structure Definitions******************/
-
-#include "Types.h" // float2, short2
- 
-struct Attribs 
-{
-	ushort hasParent  : 1;
-	ushort hasChild   : 1;
-	ushort targetID : 14;
-};
 
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
@@ -242,7 +236,7 @@ inline int Distance(short2 current, short2 target)
 HRESULT FindNearestNeighbor(short index)
 {
 	HRESULT hr = S_OK;
-	
+
 	if (g_attribs[index].hasParent == true)
 		return S_FALSE;
 
@@ -297,7 +291,7 @@ HRESULT FindNearestNeighbor(short index)
 	} while (nearest == ushort(-1));
 
 	if (nearest != ushort(-1)) g_attribs[index].targetID = nearest;
-
+	
 	return S_OK;
 }
 
@@ -329,37 +323,43 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
 
 	// TODO: Not this! Inefficient
-	int bin;
-	memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
-	for (uint i = 0; i < g_numVerts; i++)
+	BeginCounter(&binningCounter);
 	{
-		if (g_attribs[i].hasChild == true) continue; // Only bin the chompable tails
-		hr = Bin(g_positions[i].getX(), g_positions[i].getY(), &bin);
-		if (FAILED(hr)) // If this bin isn't backed by memory, don't use it
-			continue;
-
-		// Find first empty bin slot
-		for (uint slot = 0; slot < g_binStride; slot++) 
+		int bin;
+		memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
+		for (uint i = 0; i < g_numVerts; i++)
 		{
-			if (g_slots[bin*g_binStride + slot] == EMPTY_SLOT)
-			{
-				g_slots[bin*g_binStride + slot] = i;
-				break;
-			}
-		}
+			if (g_attribs[i].hasChild == true) continue; // Only bin the chompable tails
+			hr = Bin(g_positions[i].getX(), g_positions[i].getY(), &bin);
+			if (FAILED(hr)) // If this bin isn't backed by memory, don't use it
+				continue;
 
-		// TODO: What if all slots in the bin are full
+			// Find first empty bin slot
+			for (uint slot = 0; slot < g_binStride; slot++) 
+			{
+				if (g_slots[bin*g_binStride + slot] == EMPTY_SLOT)
+				{
+					g_slots[bin*g_binStride + slot] = i;
+					break;
+				}
+			}
+			// TODO: What if all slots in the bin are full
+		}
+		g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinSplits*g_numBinSplits);
 	}
-	g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinSplits*g_numBinSplits);
+	EndCounter(&binningCounter);
 
 	// Determine nearest neighbors
+	BeginCounter(&nearestNeighborCounter);
 	for (uint i = 0; i < g_numVerts; i++)
 	{
 		IFC( FindNearestNeighbor(i) );
 	}
+	EndCounter(&nearestNeighborCounter);
 
 	// TODO: Organize the nodes of a snake linearly in memory
 	// TODO: Try zipping the attribute and position buffers
+	BeginCounter(&positionUpdate);
 	for (uint i = 0; i < g_numVerts; i++)
 	{
 		// Get target vector
@@ -394,6 +394,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 		if (g_attribs[i].hasParent == false && dist <= g_tailDist)
 			Chomp(i);
 	}
+	EndCounter(&positionUpdate);
 
 Cleanup:
 	if (g_numActiveVerts == 1)
@@ -673,41 +674,6 @@ LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
     }
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
-}
-
-int testMain (int argc, char* argv[])
-{
-    LARGE_INTEGER freqTime;
-	LARGE_INTEGER previousTime;
-    LARGE_INTEGER currentTime;
-	__int64 aveDeltaTime = 0;
-	uint numUpdateLoops = 1000;
-	
-    QueryPerformanceFrequency(&freqTime);
-    QueryPerformanceCounter(&previousTime);
-
-	for (uint i = 0; i < numUpdateLoops; i++)
-	{
-		QueryPerformanceCounter(&previousTime);
-		Update(16000, 0);
-		QueryPerformanceCounter(&currentTime);
-
-		if (i >= 100) // Skip the first c iterations to warm it up a bit
-			aveDeltaTime += currentTime.QuadPart - previousTime.QuadPart;
-		
-		// Reset the sim
-		for (uint i = 0; i < g_numVerts; i++)
-		{
-			g_positions[i].setX(frand()*2 - 1);
-			g_positions[i].setY(frand()*2 - 1);
-		}
-		memset(g_attribs, 0, sizeof(g_attribs));
-	}
-
-	double deltaTimeSeconds = double(aveDeltaTime) / (numUpdateLoops * freqTime.QuadPart);
-	printf("Average frame duration = %.3f ms\n", deltaTimeSeconds * 1000.0f); 
-
-	return 0;
 }
 
 void Error(const char* pStr, ...)
