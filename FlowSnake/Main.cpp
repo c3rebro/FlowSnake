@@ -79,8 +79,7 @@ bool g_endgame = false;
 short g_numActiveVerts = g_numVerts;
 
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
-short2  g_positions[g_numVerts] = {{1,1}};
-Attribs g_attribs[g_numVerts] = {{0, 0, 1}};
+Node g_nodes[g_numVerts] = {{{0,0,1}, {1,1}}};
 
 // 128k total memory. 
 // I think I can pack particle attributes into 6 bytes. (2 shorts for pos, 1 short for target and state)
@@ -103,16 +102,17 @@ ushort g_slots[g_numSlots] = {0xFFFF};
 
 /**************************************************/
 
+//TODO: This access memory all over the place. Can we make this better?
 inline bool IsValidTarget(short target, short current)
 {
-	if (target == current) return false;					// Can't chase ourselves
-	if (g_attribs[target].hasChild == true) return false;	// It can't already have a child
+	if (target == current) return false;						// Can't chase ourselves
+	if (g_nodes[target].attribs.hasChild == true) return false;	// It can't already have a child
 
 	// Can't chase our own tail
 	short chain = target;
-	while (g_attribs[chain].hasParent)
+	while (g_nodes[chain].attribs.hasParent)
 	{
-		chain = g_attribs[chain].targetID;
+		chain = g_nodes[chain].attribs.targetID;
 		if (chain == current)
 		{
 			return false;
@@ -144,8 +144,8 @@ HRESULT EndgameUpdate(uint deltaTime)
 		velx = SmoothStep(velx, 0.0f, float(absoluteTime)/timeLimit);
 		vely = SmoothStep(vely, 0.0f, float(absoluteTime)/timeLimit);
 
-		g_positions[i].setX(g_positions[i].getX() + velx * float(deltaTime)/1000000.0f);
-		g_positions[i].setY(g_positions[i].getY() + vely * float(deltaTime)/1000000.0f);
+		g_nodes[i].position.setX(g_nodes[i].position.getX() + velx * float(deltaTime)/1000000.0f);
+		g_nodes[i].position.setY(g_nodes[i].position.getY() + vely * float(deltaTime)/1000000.0f);
 	}
 
 	if (absoluteTime > timeLimit)
@@ -156,8 +156,8 @@ HRESULT EndgameUpdate(uint deltaTime)
 
 		for (uint i = 0; i < g_numVerts; i++)
 		{
-			g_attribs[i].hasChild = false;
-			g_attribs[i].hasParent = false;
+			g_nodes[i].attribs.hasChild = false;
+			g_nodes[i].attribs.hasParent = false;
 		}
 	}
 
@@ -186,12 +186,12 @@ HRESULT Endgame()
 
 HRESULT Chomp(short chomper)
 {
-	short target = g_attribs[chomper].targetID;
+	short target = g_nodes[chomper].attribs.targetID;
 	
 	if (IsValidTarget(target, chomper))
 	{
-		g_attribs[chomper].hasParent = true;
-		g_attribs[target].hasChild = true;
+		g_nodes[chomper].attribs.hasParent = true;
+		g_nodes[target].attribs.hasChild = true;
 		--g_numActiveVerts;
 	}
 
@@ -237,10 +237,10 @@ HRESULT FindNearestNeighbor(short index)
 {
 	HRESULT hr = S_OK;
 
-	if (g_attribs[index].hasParent == true)
+	if (g_nodes[index].attribs.hasParent == true)
 		return S_FALSE;
 
-	float2 pos = {g_positions[index].getX(), g_positions[index].getY()};
+	float2 pos = {g_nodes[index].position.getX(), g_nodes[index].position.getY()};
 	if (Bin(pos.x, pos.y, nullptr) != S_OK)
 		return S_FALSE; // if we're not in a bin backed by memory, just keep our old neighbor
 
@@ -268,7 +268,7 @@ HRESULT FindNearestNeighbor(short index)
 						break;
 					else if (IsValidTarget(target, index))
 					{
-						__int64 dist = Distance(g_positions[index], g_positions[target]);
+						__int64 dist = Distance(g_nodes[index].position, g_nodes[target].position);
 						if (dist < minDist)
 						{
 							minDist = dist;
@@ -290,15 +290,15 @@ HRESULT FindNearestNeighbor(short index)
 
 	} while (nearest == ushort(-1));
 
-	if (nearest != ushort(-1)) g_attribs[index].targetID = nearest;
-	else if (IsValidTarget(g_attribs[index].targetID, index) == false)
+	if (nearest != ushort(-1)) g_nodes[index].attribs.targetID = nearest;
+	else if (IsValidTarget(g_nodes[index].attribs.targetID, index) == false)
 	{
 		// If our current target is invalid, and we weren't able to find a new one, we'll have to revert to N^2
 		for (uint i = 0; i < g_numVerts; i++)
 		{
 			if (IsValidTarget(i, index))
 			{
-				__int64 dist = Distance(g_positions[index], g_positions[i]);
+				__int64 dist = Distance(g_nodes[index].position, g_nodes[i].position);
 				if (dist < minDist)
 				{
 					minDist = dist;
@@ -307,7 +307,7 @@ HRESULT FindNearestNeighbor(short index)
 			}
 		}
 		ASSERT(nearest != -1);
-		g_attribs[index].targetID = nearest;
+		g_nodes[index].attribs.targetID = nearest;
 	}
 	
 	return S_OK;
@@ -347,8 +347,8 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 		memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
 		for (uint i = 0; i < g_numVerts; i++)
 		{
-			if (g_attribs[i].hasChild == true) continue; // Only bin the chompable tails
-			hr = Bin(g_positions[i].getX(), g_positions[i].getY(), &bin);
+			if (g_nodes[i].attribs.hasChild == true) continue; // Only bin the chompable tails
+			hr = Bin(g_nodes[i].position.getX(), g_nodes[i].position.getY(), &bin);
 			if (FAILED(hr)) // If this bin isn't backed by memory, don't use it
 				continue;
 
@@ -380,13 +380,15 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 	BeginCounter(&positionUpdate);
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		// Get target vector
-		short target = g_attribs[i].targetID;
-		float2 targetVec;
+		// Do our memory reads here so we optimize our access paterns
+		Node& current = g_nodes[i];
+		Node& target = g_nodes[current.attribs.targetID];
 
+		// Get target vector
 		// For optimal precision, pull our shorts into floats and do all math at full precision...
-		targetVec.x = g_positions[target].getX() - g_positions[i].getX();
-		targetVec.y = g_positions[target].getY() - g_positions[i].getY();
+		float2 targetVec;
+		targetVec.x = target.position.getX() - current.position.getX();
+		targetVec.y = target.position.getY() - current.position.getY();
 
 		float dist = targetVec.getLength();
 		float2 dir = targetVec;
@@ -395,7 +397,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 		
 		// Calculate change in position
 		float2 offset;
-		if (g_attribs[i].hasParent)
+		if (current.attribs.hasParent)
 		{
 			// This controls wigglyness. Perhaps it should be a function of velocity? (static is more wiggly)
 			float parentPaddingRadius = g_tailDist;// + (rand() * 2 - 1)*g_tailDist*0.3f;
@@ -404,12 +406,13 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 		else
 			offset = min(targetVec, dir * g_speed * float(deltaTime)/1000000.0f);
 		
+		// TODO: Use the pos pointer above
 		// ... then finally, at the verrrry end, stuff our FP floats into 16-bit shorts
-		g_positions[i].setX(g_positions[i].getX() + offset.x);
-		g_positions[i].setY(g_positions[i].getY() + offset.y);
+		current.position.setX(current.position.getX() + offset.x);
+		current.position.setY(current.position.getY() + offset.y);
 		
 		// Check for chomps
-		if (g_attribs[i].hasParent == false && dist <= g_tailDist)
+		if (current.attribs.hasParent == false && dist <= g_tailDist)
 			Chomp(i);
 	}
 	EndCounter(&positionUpdate);
@@ -427,7 +430,7 @@ HRESULT Render()
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(g_positions), g_positions, GL_STREAM_DRAW); 
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_nodes), g_nodes, GL_STREAM_DRAW); 
 
 	glDrawArrays(GL_POINTS, 0, g_numVerts);
 	return S_OK;
@@ -530,19 +533,20 @@ HRESULT Init()
 	// Calculate random starting positions
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		g_positions[i].setX(frand()*2 - 1);
-		g_positions[i].setY(frand()*2 - 1);
+		g_nodes[i].position.setX(frand()*2 - 1);
+		g_nodes[i].position.setY(frand()*2 - 1);
 	}
 
 	// Initialize buffers
 	uint positionSlot = 0;
-    GLsizei stride = sizeof(g_positions[0]);
-	GLsizei totalSize = sizeof(g_positions);
+	GLsizei stride = sizeof(g_nodes[0]);
+	GLsizei totalSize = sizeof(g_nodes);
+	uint offset = (char*)&g_nodes[0].position - (char*)&g_nodes[0];
     glGenBuffers(1, &g_vboPos);
     glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
-    glBufferData(GL_ARRAY_BUFFER, totalSize, g_positions, GL_STREAM_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, totalSize, g_nodes, GL_STREAM_DRAW);
     glEnableVertexAttribArray(positionSlot);
-    glVertexAttribPointer(positionSlot, 2, GL_UNSIGNED_SHORT, GL_TRUE, stride, 0);
+	glVertexAttribPointer(positionSlot, 2, GL_UNSIGNED_SHORT, GL_TRUE, stride, (GLvoid*)offset);
 
 Cleanup:
 	return hr;
@@ -626,9 +630,7 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 
     QueryPerformanceFrequency(&freqTime);
     QueryPerformanceCounter(&previousTime);
-
-	uint test = sizeof(Attribs);
-
+	
 	// -------------------
     // Start the Game Loop
     // -------------------

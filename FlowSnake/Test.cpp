@@ -6,8 +6,7 @@
 #include "Test.h"
 
 const uint g_numVerts = 16000;
-extern short2 g_positions[];
-extern Attribs g_attribs[g_numVerts];
+extern Node g_nodes[g_numVerts];
 
 extern float frand();
 extern HRESULT Update(uint deltaTime, uint absoluteTime);
@@ -43,7 +42,7 @@ int testMain (int argc, char* argv[])
 	double avePos = 0;
 
 	uint numUpdateLoops = 100;
-	
+
     QueryPerformanceFrequency(&freqTime);
 
 	// Each run starts with a new set of initial random positions
@@ -63,12 +62,12 @@ int testMain (int argc, char* argv[])
 		}
 		
 		// Reset the sim
+		memset(g_nodes, 0, sizeof(g_nodes));
 		for (uint i = 0; i < g_numVerts; i++)
 		{
-			g_positions[i].setX(frand()*2 - 1);
-			g_positions[i].setY(frand()*2 - 1);
+			g_nodes[i].position.setX(frand()*2 - 1);
+			g_nodes[i].position.setY(frand()*2 - 1);
 		}
-		memset(g_attribs, 0, sizeof(g_attribs));
 	}
 	
 	printf("Average Update duration = %.3f ms\n", aveDeltaTime/numUpdateLoops * 1000.0f); 

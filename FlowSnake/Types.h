@@ -85,5 +85,11 @@ struct Attribs
 {
 	ushort hasParent  : 1;
 	ushort hasChild   : 1;
-	ushort targetID : 14;
+	ushort targetID   : 14;
+};
+
+struct Node
+{
+	Attribs attribs;
+	short2 position;
 };
