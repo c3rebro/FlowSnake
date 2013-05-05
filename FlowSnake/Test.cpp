@@ -9,7 +9,7 @@ const uint g_numVerts = 16000;
 extern Node g_nodes[g_numVerts];
 
 extern float frand();
-extern HRESULT Update(uint deltaTime, uint absoluteTime);
+extern HRESULT Update(double deltaTime);
 
 LARGE_INTEGER freqTime;
 
@@ -50,7 +50,7 @@ int testMain (int argc, char* argv[])
 	for (uint i = 0; i < numUpdateLoops; i++)
 	{
 		BeginCounter(&updateTime);
-		Update(16000, 0);
+		Update(0.016);
 		EndCounter(&updateTime);
 
 		if (i >= 10) // Skip the first c iterations to warm it up a bit

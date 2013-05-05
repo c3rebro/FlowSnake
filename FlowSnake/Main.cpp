@@ -122,30 +122,25 @@ inline bool IsValidTarget(short target, short current)
 	return true;
 }
 
-HRESULT EndgameUpdate(uint deltaTime)
+HRESULT EndgameUpdate(double deltaTime)
 {
 	static short* velocityBuf = (short*)g_slots;
 	static const uint numVels = g_numSlots/2;
-	static uint absoluteTime = 0;
-	const float timeLimit = 5000000.0f; // 5 seconds
+	static double absoluteTime = 0;
+	const float timeLimit = 5.0f; // 5 seconds
 
 	absoluteTime += deltaTime;
 
 	for (uint i = 0; i < g_numVerts; i++)
 	{	
-		/*if (g_positions[i].x > 1.0f || g_positions[i].x < 0.0f)
-			g_vectors[i].x = -g_vectors[i].x;
-		if (g_positions[i].y > 1.0f || g_positions[i].y < 0.0f)
-			g_vectors[i].y = -g_vectors[i].y;*/
-
 		float velx = velocityBuf[2*(i%numVels)] / MAX_SSHORTF;
 		float vely = velocityBuf[2*(i%numVels)+1] / MAX_SSHORTF;
 
 		velx = SmoothStep(velx, 0.0f, float(absoluteTime)/timeLimit);
 		vely = SmoothStep(vely, 0.0f, float(absoluteTime)/timeLimit);
 
-		g_nodes[i].position.setX(g_nodes[i].position.getX() + velx * float(deltaTime)/1000000.0f);
-		g_nodes[i].position.setY(g_nodes[i].position.getY() + vely * float(deltaTime)/1000000.0f);
+		g_nodes[i].position.setX(g_nodes[i].position.getX() + velx * deltaTime);
+		g_nodes[i].position.setY(g_nodes[i].position.getY() + vely * deltaTime);
 	}
 
 	if (absoluteTime > timeLimit)
@@ -313,12 +308,12 @@ HRESULT FindNearestNeighbor(short index)
 	return S_OK;
 }
 
-HRESULT Update(uint deltaTime, uint absoluteTime)
+HRESULT Update(double deltaTime)
 {
 	HRESULT hr = S_OK;
 
 	if (g_endgame)
-		return EndgameUpdate((uint) deltaTime);
+		return EndgameUpdate(deltaTime);
 
 	// TODO: Optimize for cache coherency
 
@@ -404,7 +399,7 @@ HRESULT Update(uint deltaTime, uint absoluteTime)
 			offset = targetVec - dir * parentPaddingRadius;
 		}
 		else
-			offset = min(targetVec, dir * g_speed * float(deltaTime)/1000000.0f);
+			offset = min(targetVec, dir * g_speed * deltaTime);
 		
 		// TODO: Use the pos pointer above
 		// ... then finally, at the verrrry end, stuff our FP floats into 16-bit shorts
@@ -649,11 +644,11 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
 
             QueryPerformanceCounter(&currentTime);
             elapsed = currentTime.QuadPart - previousTime.QuadPart;
-            deltaTime = elapsed * 1000000.0 / freqTime.QuadPart;
+            deltaTime = double(elapsed) / freqTime.QuadPart;
 			aveDeltaTime = aveDeltaTime * 0.9 + 0.1 * deltaTime;
             previousTime = currentTime;
 
-			IFC( Update((uint) deltaTime, (uint) elapsed) );
+			IFC( Update(deltaTime) );
 
 			Render();
             SwapBuffers(hDC);
@@ -669,7 +664,7 @@ Cleanup:
     //UnregisterClassA(szName, wc.hInstance);
 
 	char strBuf[256];
-	sprintf_s(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime/1000.0f); 
+	sprintf_s(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime*1000.0f); 
 	OutputDebugString(strBuf);
 
     return FAILED(hr);
