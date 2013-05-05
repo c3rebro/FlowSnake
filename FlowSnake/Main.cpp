@@ -414,7 +414,7 @@ HRESULT Update(double deltaTime)
 
 Cleanup:
 	if (g_numActiveVerts == 1)
-		Endgame();
+		return Endgame();
 
 	return hr;
 }
