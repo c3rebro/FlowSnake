@@ -59,11 +59,13 @@ struct short2
 {
 	void setX(float a)
 	{
+		// These 0.5 offsets are for rounding...
 		x = ushort(a * MAX_USHORTF + 0.5f);
 	}
 
 	void setY(float a)
 	{
+		// ... Without them the positions would drift towards 0!
 		y = ushort(a * MAX_USHORTF + 0.5f);
 	}
 

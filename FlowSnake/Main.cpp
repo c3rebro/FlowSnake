@@ -14,7 +14,7 @@
 #endif
 
 /********** Defines *******************************/
-#define countof(x) (sizeof(x)/sizeof(x[0])) // Defined in stdlib, but define here to avoid the header cost
+#define countof(x) (sizeof(x)/sizeof(x[0]))
 #ifdef _DEBUG
 #	define IFC(x) { if (FAILED(hr = x)) { char buf[256]; sprintf_s(buf, "IFC Failed at Line %u\n", __LINE__); OutputDebugString(buf); goto Cleanup; } }
 #	define ASSERT(x) if (!(x)) { OutputDebugString("Assert Failed!\n"); DebugBreak(); }
@@ -29,8 +29,9 @@
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
-void Resize(uint width, uint height);
+uint Distance(short2 current, short2 target);
 float SmoothStep(float a, float b, float t);
+void Resize(uint width, uint height);
 void Error(const char* pStr, ...);
 float frand();
 short srand();
@@ -57,9 +58,9 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
-const uint g_numSlots = 8000;
-const float g_tailDist = 0.001f;
-const float g_speed = 0.1f; // in Screens per second
+const uint g_numSlots = 4000;
+const float g_tailDist = 0.0001f;
+float g_speed = 0.2f; // in Screens per second
 
 /********** Globals Variables *********************/
 GLuint g_vboPos = 0;
@@ -97,7 +98,7 @@ Node g_nodes[g_numVerts] = {{{0,0,1}, {1,1}}};
 // Well it's a start. That's 32000 bytes for spatial partitioning, plus 96000 for the particles = 128000. 
 // That leaves 3072 bytes for the .exe and extra .data. Close to doable!
 // But wait! We don't need to calculate everybody's nearest neighbor every frame,
-// If we save the targets, we can re-search every 4th or so frame (that's only 64ms, not human noticeable)
+// If we save the targets, we can re-search every 4th or so frame (that's 64ms max, shouldn't be noticeable)
 // Then we only need a quarter of the binning space! Woo! 
 // So thats 4000 slots (1 short each) for 16000 particles. Which leaves 27072 bytes left over. Nice.
 ushort g_slots[g_numSlots] = {0xFFFF}; 
@@ -181,13 +182,16 @@ HRESULT Endgame()
 	return S_OK;
 }
 
-HRESULT Chomp(short chomper)
+// The Node pointed to by node index is in range of it's target
+// If it's still a valid target (no one chomped it this frame) 
+// then join these two segments
+HRESULT Chomp(short nodeIndex)
 {
-	short target = g_nodes[chomper].attribs.targetID;
+	short target = g_nodes[nodeIndex].attribs.targetID;
 	
-	if (IsValidTarget(target, chomper))
+	if (IsValidTarget(target, nodeIndex))
 	{
-		g_nodes[chomper].attribs.hasParent = true;
+		g_nodes[nodeIndex].attribs.hasParent = true;
 		g_nodes[target].attribs.hasChild = true;
 		--g_numActiveVerts;
 	}
@@ -195,38 +199,34 @@ HRESULT Chomp(short chomper)
 	return S_OK;
 }
 
+// Given xy bin coordinates return the bin's index into the slot buffer
 HRESULT Bin(int binX, int binY, int* bin)
 {
-	// TODO: Tile these. 2D Tiling? (3D?)
+	// TODO: Tiling/Swizzling the bin memory could make this more efficient... 
 	if (bin) *bin = (binX - g_binRangeX[0]) + (binY - g_binRangeY[0]) * (g_binRangeX[1] - g_binRangeX[0]+1);
 
-	// Return S_BOUNDARY if this bin is on the outside edge (the buffer zone)
-	//		  E_FAIL if the bin is outside the mem mapped zone
-	//		  S_OK if it is inside
+	// Return E_FAIL if the bin is outside the mem mapped zone
 	if (binX < g_binRangeX[0] || binX > g_binRangeX[1] ||
 		binY < g_binRangeY[0] || binY > g_binRangeY[1] ) 
 		return E_FAIL;
+
+	// Return S_BOUNDARY if this bin is on the outside edge (the buffer zone)
 	if (binX == g_binRangeX[0] || binX == g_binRangeX[1] ||
 		binY == g_binRangeY[0] || binY == g_binRangeY[1])
 		return S_BOUNDARY;
+	
+	// Return S_OK if it is inside
 	else
 		return S_OK;
 }
 
+// Given a position in normalized 0..1 space, find the position's bin and 
+// return its index into the slot buffer
 HRESULT Bin(float posx, float posy, int* bin)
 {
 	int bucketX = uint(posx / g_binNWidth);
 	int bucketY = uint(posy / g_binNHeight);
 	return Bin(bucketX, bucketY, bin);
-}
-
-uint Distance(short2 current, short2 target)
-{
-	int diffx = abs(int(current.x - target.x));
-	int diffy = abs(int(current.y - target.y));
-	int dist = diffx + diffy; // Manhattan distance
-	ASSERT(dist >= 0); // dist < 0 means overflow
-	return dist;
 }
 
 HRESULT FindNearestNeighbor(short index)
@@ -259,6 +259,8 @@ HRESULT FindNearestNeighbor(short index)
 					// TODO: These large strides are going to kill the cache! 
 					//		 We should probably switch to storing the node indexes linearly with the MSb denoting end of bucket
 					//		 Then we'd have a separate table to index into this based on bucket
+					// No, that won't work because inserts would be very difficult/expensive. The easiest way would be a linked
+					//	   list, but that would obviously be super slow. I think I the first try was actually the best ;D
 					ushort target = g_slots[bin*g_binStride + slot];
 					if (target == EMPTY_SLOT)
 						break;
@@ -317,27 +319,30 @@ HRESULT Update(double deltaTime)
 		return EndgameUpdate(deltaTime);
 
 	// TODO: Optimize for cache coherency
+	//		 We could attempt to store chains of nodes linearly in memory. That would make the update loop for those chains
+	//		 super fast (since the most chains could probably fit in one cache line). But it would involve a lot of mem moves
+	//		 and could introduce some complexity. Since we're already under 1ms average, I'd say let's not do it.
 
 	// Sort into buckets
-	float pixelsPerVert = float((g_width * g_height) / g_numActiveVerts);
-	float binDiameterPixels = sqrtf(pixelsPerVert); // conservative
-	
-	g_binNHeight = binDiameterPixels / g_height;
-	g_binNWidth  = binDiameterPixels / g_width;
-
-	g_binCountX  = uint(ceilf(1.0f / g_binNWidth) )+2;  // TODO: If we clamp all positions passed to Bin(), this could be +1
-	g_binCountY  = uint(ceilf(1.0f / g_binNHeight))+2;
-
-	uint xiter = g_binUpdateIter % g_numBinSplits;
-	uint yiter = g_binUpdateIter / g_numBinSplits;
-	g_binRangeX[0] = (g_binCountX * xiter/g_numBinSplits)		  - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
-	g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinSplits - 1) + 1;	// This buffer layer will be overlap for each quadrant
-	g_binRangeY[0] = (g_binCountY * yiter/g_numBinSplits)		  - 1;	// But without it verts would only target verts in their quadrant
-	g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinSplits - 1) + 1;
-	g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
-
 	BeginCounter(&binningCounter);
 	{
+		float pixelsPerVert = float((g_width * g_height) / g_numActiveVerts);
+		float binDiameterPixels = sqrtf(pixelsPerVert); // conservative
+	
+		g_binNHeight = binDiameterPixels / g_height;
+		g_binNWidth  = binDiameterPixels / g_width;
+
+		g_binCountX  = uint(ceilf(1.0f / g_binNWidth) )+2;  // Add a boundary around the outside
+		g_binCountY  = uint(ceilf(1.0f / g_binNHeight))+2;
+
+		uint xiter = g_binUpdateIter % g_numBinSplits;
+		uint yiter = g_binUpdateIter / g_numBinSplits;
+		g_binRangeX[0] = (g_binCountX * xiter/g_numBinSplits)		  - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
+		g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinSplits - 1) + 1;	// This buffer layer will be overlap for each quadrant
+		g_binRangeY[0] = (g_binCountY * yiter/g_numBinSplits)		  - 1;	// But without it verts would only target verts in their quadrant
+		g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinSplits - 1) + 1;
+		g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
+
 		int bin;
 		memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
 		for (uint i = 0; i < g_numVerts; i++)
@@ -370,11 +375,10 @@ HRESULT Update(double deltaTime)
 	}
 	EndCounter(&nearestNeighborCounter);
 
-	// TODO: Organize the nodes of a snake linearly in memory
 	BeginCounter(&positionUpdate);
 	for (uint i = 0; i < g_numVerts; i++)
 	{
-		// Do our memory reads here so we optimize our access paterns
+		// Do our memory reads here so we can optimize our access patterns
 		Node& current = g_nodes[i];
 		Node& target = g_nodes[current.attribs.targetID];
 
@@ -692,6 +696,15 @@ LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
 	}
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+uint Distance(short2 current, short2 target)
+{
+	int diffx = abs(int(current.x - target.x));
+	int diffy = abs(int(current.y - target.y));
+	int dist = diffx + diffy; // Manhattan distance
+	ASSERT(dist >= 0); // dist < 0 means overflow
+	return dist;
 }
 
 void Resize(uint width, uint height)
