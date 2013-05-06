@@ -1,17 +1,10 @@
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#include <stdio.h>
-#include <math.h>
-#include "Types.h"
-#include "Test.h"
-
-const uint g_numVerts = 16000;
-extern Node g_nodes[g_numVerts];
-extern bool g_endgame;
-extern short g_numActiveVerts;
-
-extern float frand();
-extern HRESULT Update(double deltaTime);
+//const uint g_numVerts = 16000;
+//extern Node g_nodes[g_numVerts];
+//extern bool g_endgame;
+//extern short g_numActiveVerts;
+//
+//extern float frand();
+//extern HRESULT Update(double deltaTime);
 
 LARGE_INTEGER freqTime;
 
@@ -86,6 +79,9 @@ void testSim()
 	double avePos = 0;
 
 	Counter simTime;
+	LARGE_INTEGER frameTime;
+	LARGE_INTEGER prevFrameTime;
+	
 
 	// Set up our initial state
 	memset(g_nodes, 0, sizeof(g_nodes));
@@ -94,21 +90,35 @@ void testSim()
 		g_nodes[i].position.setX(frand()*2 - 1);
 		g_nodes[i].position.setY(frand()*2 - 1);
 	}
-
+	
+	g_numActiveVerts = g_numVerts;
 	BeginCounter(&simTime);
 	for (i = 0; g_endgame == false && g_numActiveVerts > 1; i++)
 	{
-		BeginCounter(&updateTime);
-		Update(0.001);
-		EndCounter(&updateTime);
+		double runningAve = 0.001;
+		
+		__int64 elapsed;
 
-		if ( i % 1000 == 0)
-			printf("Num active verts: %u\n", g_numActiveVerts);
+		QueryPerformanceCounter(&frameTime);
+        elapsed = frameTime.QuadPart - prevFrameTime.QuadPart;
+        prevFrameTime = frameTime;
+
+		BeginCounter(&updateTime);
+		Update(double(elapsed) / freqTime.QuadPart);
+		EndCounter(&updateTime);
 
 		aveDeltaTime += GetCounter(updateTime);
 		aveBinning += GetCounter(binningCounter);
 		aveNN += GetCounter(nearestNeighborCounter);
 		avePos += GetCounter(positionUpdate);
+
+		runningAve = 0.9*runningAve + 0.1*GetCounter(updateTime);
+
+		if ( i % 1000 == 0)
+		{
+			printf("Num Active Verts: %u\n", g_numActiveVerts);
+			printf("Average Update Time: %lf ms\n", runningAve * 1000.0f);
+		}
 	}
 	EndCounter(&simTime);
 	

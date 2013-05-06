@@ -58,7 +58,7 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 const uint g_numVerts = 16000;
 const uint g_numSlots = 8000;
 const float g_tailDist = 0.001f;
-const float g_speed = 0.3f; // in Screens per second
+const float g_speed = 0.1f; // in Screens per second
 
 /********** Globals Variables *********************/
 GLuint g_vboPos = 0;
@@ -336,7 +336,6 @@ HRESULT Update(double deltaTime)
 	g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinSplits - 1) + 1;
 	g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
 
-	// TODO: Not this! Inefficient
 	BeginCounter(&binningCounter);
 	{
 		int bin;
@@ -345,7 +344,7 @@ HRESULT Update(double deltaTime)
 		{
 			if (g_nodes[i].attribs.hasChild == true) continue; // Only bin the chompable tails
 			hr = Bin(g_nodes[i].position.getX(), g_nodes[i].position.getY(), &bin);
-			if (FAILED(hr)) // If this bin isn't backed by memory, don't use it
+			if (FAILED(hr)) // If this bin isn't backed by memory, we can't be a target this frame
 				continue;
 
 			// Find first empty bin slot
@@ -357,7 +356,7 @@ HRESULT Update(double deltaTime)
 					break;
 				}
 			}
-			// TODO: What if all slots in the bin are full
+			// If we overflow the bins, the vertex cannot be targeted. Haven't seen any cases yet...
 		}
 		g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinSplits*g_numBinSplits);
 	}
@@ -546,10 +545,8 @@ Cleanup:
 	return hr;
 }
 
-HRESULT InitWindow(HWND& hWnd, int width, int height)
+HRESULT InitWindow(HWND& hWnd, int width, int height, LPCSTR name)
 {
-    LPCSTR wndName = "Flow Snake";
-
 	// Create our window
 	WNDCLASSEX wndClass;
 	wndClass.cbSize = sizeof(WNDCLASSEX);
@@ -562,7 +559,7 @@ HRESULT InitWindow(HWND& hWnd, int width, int height)
 	wndClass.hCursor = LoadCursor(0, IDC_ARROW);
 	wndClass.hbrBackground = NULL;
 	wndClass.lpszMenuName = NULL;
-	wndClass.lpszClassName = wndName;
+	wndClass.lpszClassName = name;
 	wndClass.hIconSm = NULL;
     RegisterClassEx(&wndClass);
 	
@@ -578,7 +575,7 @@ HRESULT InitWindow(HWND& hWnd, int width, int height)
     int wndLeft = GetSystemMetrics(SM_XVIRTUALSCREEN) + 
 				  GetSystemMetrics(SM_CXSCREEN) / 2 - wndWidth / 2;
 
-	hWnd = CreateWindowEx(0, wndName, wndName, wndStyle, wndLeft, wndTop, 
+	hWnd = CreateWindowEx(0, name, name, wndStyle, wndLeft, wndTop, 
 						  wndWidth, wndHeight, NULL, NULL, NULL, NULL);
 	if (hWnd == NULL)
 	{
@@ -602,7 +599,9 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
     LARGE_INTEGER freqTime;
 	double aveDeltaTime = 0.0;
 
-	IFC( InitWindow(hWnd, g_width, g_height) );
+    LPCSTR wndName = "Flow Snake";
+
+	IFC( InitWindow(hWnd, g_width, g_height, wndName) );
     hDC = GetDC(hWnd);
 
     // Create the GL context.
@@ -659,8 +658,9 @@ INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE ignoreMe0, LPSTR ignoreMe1, INT ig
     }
 
 Cleanup:
-	if(hRC) wglDeleteContext(hRC);
-    //UnregisterClassA(szName, wc.hInstance);
+	if(hRC)  wglDeleteContext(hRC);
+	if(hDC)  ReleaseDC(hWnd, hDC);
+	if(hWnd) DestroyWindow(hWnd);
 
 	char strBuf[256];
 	sprintf_s(strBuf, "Average frame duration = %.3f ms\n", aveDeltaTime*1000.0f); 
@@ -720,3 +720,7 @@ float SmoothStep(float a, float b, float t)
 {
 	return a + (pow(t,2)*(3-2*t))*(b - a);
 }
+
+#ifdef _TEST
+#	include "Test.cpp"
+#endif
