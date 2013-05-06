@@ -29,6 +29,7 @@
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
+void Resize(uint width, uint height);
 float SmoothStep(float a, float b, float t);
 void Error(const char* pStr, ...);
 float frand();
@@ -221,7 +222,6 @@ HRESULT Bin(float posx, float posy, int* bin)
 
 uint Distance(short2 current, short2 target)
 {
-	// TODO: Do this math in shorts
 	int diffx = abs(int(current.x - target.x));
 	int diffy = abs(int(current.y - target.y));
 	int dist = diffx + diffy; // Manhattan distance
@@ -563,7 +563,7 @@ HRESULT InitWindow(HWND& hWnd, int width, int height, LPCSTR name)
 	wndClass.hIconSm = NULL;
     RegisterClassEx(&wndClass);
 	
-    DWORD wndStyle = WS_SYSMENU | WS_CAPTION | WS_VISIBLE | WS_POPUP ;
+	DWORD wndStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_POPUP ;
     DWORD wndExStyle = WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;
 
 	RECT wndRect;
@@ -677,6 +677,10 @@ LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
 		PostQuitMessage(0);
 		break;
 
+	case WM_SIZE:
+		Resize(LOWORD(lParam), HIWORD(lParam)); 
+		break;
+
     case WM_KEYDOWN:
         switch (wParam)
         {
@@ -685,9 +689,16 @@ LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam)
                 break;
         }
         break;
-    }
+	}
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+void Resize(uint width, uint height)
+{
+	g_width = width;
+	g_height = height;
+	glViewport( 0, 0, ( GLint )width, ( GLint )height );
 }
 
 void Error(const char* pStr, ...)
