@@ -1,6 +1,6 @@
 #define MAX_SSHORTF 32767.0f
 #define MAX_USHORTF 65535.0f
-#define MAX_SINTF 2147483647.0f 
+#define MAX_SINTF 2147483646.0f 
 #define MAX_UINTF 4294967295.0f 
 
 typedef UINT uint;

@@ -23,7 +23,8 @@
 #	define ASSERT(x)
 #endif
 
-#define E_NOTARGETS 0x8000000f
+#define S_BOUNDARY	0x20000001
+#define E_NOTARGETS 0xA0000002
 #define EMPTY_SLOT 0xffff
 
 /********** Function Declarations *****************/
@@ -98,7 +99,7 @@ Node g_nodes[g_numVerts] = {{{0,0,1}, {1,1}}};
 // If we save the targets, we can re-search every 4th or so frame (that's only 64ms, not human noticeable)
 // Then we only need a quarter of the binning space! Woo! 
 // So thats 4000 slots (1 short each) for 16000 particles. Which leaves 27072 bytes left over. Nice.
-ushort g_slots[g_numSlots] = {0xFFFF};
+ushort g_slots[g_numSlots] = {0xFFFF}; 
 
 /**************************************************/
 
@@ -139,8 +140,8 @@ HRESULT EndgameUpdate(double deltaTime)
 		velx = SmoothStep(velx, 0.0f, float(absoluteTime)/timeLimit);
 		vely = SmoothStep(vely, 0.0f, float(absoluteTime)/timeLimit);
 
-		g_nodes[i].position.setX(g_nodes[i].position.getX() + velx * deltaTime);
-		g_nodes[i].position.setY(g_nodes[i].position.getY() + vely * deltaTime);
+		g_nodes[i].position.setX(float(g_nodes[i].position.getX() + velx * deltaTime));
+		g_nodes[i].position.setY(float(g_nodes[i].position.getY() + vely * deltaTime));
 	}
 
 	if (absoluteTime > timeLimit)
@@ -172,8 +173,8 @@ HRESULT Endgame()
 	for (uint i = 0; i < numVels; i++)
 	{
 		float maxVelocity = MAX_SSHORTF * 0.5f; // screens per second in signed short space
-		velocityBuf[2*i] = (frand()*2.0f - 1.0f) * maxVelocity;
-		velocityBuf[2*i+1] = (frand()*2.0f - 1.0f) * maxVelocity;
+		velocityBuf[2*i] = short((frand()*2.0f - 1.0f) * maxVelocity);
+		velocityBuf[2*i+1] = short((frand()*2.0f - 1.0f) * maxVelocity);
 	}
 
 	return S_OK;
@@ -198,7 +199,7 @@ HRESULT Bin(int binX, int binY, int* bin)
 	// TODO: Tile these. 2D Tiling? (3D?)
 	if (bin) *bin = (binX - g_binRangeX[0]) + (binY - g_binRangeY[0]) * (g_binRangeX[1] - g_binRangeX[0]+1);
 
-	// Return S_FALSE if this bin is on the outside edge (the buffer zone)
+	// Return S_BOUNDARY if this bin is on the outside edge (the buffer zone)
 	//		  E_FAIL if the bin is outside the mem mapped zone
 	//		  S_OK if it is inside
 	if (binX < g_binRangeX[0] || binX > g_binRangeX[1] ||
@@ -206,7 +207,7 @@ HRESULT Bin(int binX, int binY, int* bin)
 		return E_FAIL;
 	if (binX == g_binRangeX[0] || binX == g_binRangeX[1] ||
 		binY == g_binRangeY[0] || binY == g_binRangeY[1])
-		return S_FALSE;
+		return S_BOUNDARY;
 	else
 		return S_OK;
 }
@@ -218,7 +219,7 @@ HRESULT Bin(float posx, float posy, int* bin)
 	return Bin(bucketX, bucketY, bin);
 }
 
-inline int Distance(short2 current, short2 target)
+uint Distance(short2 current, short2 target)
 {
 	// TODO: Do this math in shorts
 	int diffx = abs(int(current.x - target.x));
@@ -239,10 +240,10 @@ HRESULT FindNearestNeighbor(short index)
 	if (Bin(pos.x, pos.y, nullptr) != S_OK)
 		return S_FALSE; // if we're not in a bin backed by memory, just keep our old neighbor
 
-	int xrange[2] = {pos.x/g_binNWidth - 0.5, pos.x/g_binNWidth + 0.5};
-	int yrange[2] = {pos.y/g_binNHeight - 0.5, pos.y/g_binNHeight + 0.5};
+	int xrange[2] = {int(pos.x/g_binNWidth - 0.5f), int(pos.x/g_binNWidth + 0.5f)};
+	int yrange[2] = {int(pos.y/g_binNHeight - 0.5f), int(pos.y/g_binNHeight + 0.5f)};
 
-	__int64 minDist = MAX_UINTF;
+	uint minDist = -1;
 	ushort nearest = -1;
 	int bin;
 	do {
@@ -263,7 +264,7 @@ HRESULT FindNearestNeighbor(short index)
 						break;
 					else if (IsValidTarget(target, index))
 					{
-						__int64 dist = Distance(g_nodes[index].position, g_nodes[target].position);
+						uint dist = Distance(g_nodes[index].position, g_nodes[target].position);
 						if (dist < minDist)
 						{
 							minDist = dist;
@@ -293,7 +294,7 @@ HRESULT FindNearestNeighbor(short index)
 		{
 			if (IsValidTarget(i, index))
 			{
-				__int64 dist = Distance(g_nodes[index].position, g_nodes[i].position);
+				uint dist = Distance(g_nodes[index].position, g_nodes[i].position);
 				if (dist < minDist)
 				{
 					minDist = dist;
@@ -302,7 +303,7 @@ HRESULT FindNearestNeighbor(short index)
 			}
 		}
 		ASSERT(nearest != -1);
-		g_nodes[index].attribs.targetID = nearest;
+		g_nodes[index].attribs.targetID = nearest; 
 	}
 	
 	return S_OK;
@@ -324,8 +325,8 @@ HRESULT Update(double deltaTime)
 	g_binNHeight = binDiameterPixels / g_height;
 	g_binNWidth  = binDiameterPixels / g_width;
 
-	g_binCountX  = ceilf(1.0f / g_binNWidth)+2;  // TODO: If we clamp all positions passed to Bin(), this could be +1
-	g_binCountY  = ceilf(1.0f / g_binNHeight)+2;
+	g_binCountX  = uint(ceilf(1.0f / g_binNWidth) )+2;  // TODO: If we clamp all positions passed to Bin(), this could be +1
+	g_binCountY  = uint(ceilf(1.0f / g_binNHeight))+2;
 
 	uint xiter = g_binUpdateIter % g_numBinSplits;
 	uint yiter = g_binUpdateIter / g_numBinSplits;
@@ -382,7 +383,7 @@ HRESULT Update(double deltaTime)
 		// Get target vector
 		// For optimal precision, pull our shorts into floats and do all math at full precision...
 		float2 targetVec;
-		targetVec.x = target.position.getX() - current.position.getX();
+		targetVec.x = target.position.getX() - current.position.getX(); 
 		targetVec.y = target.position.getY() - current.position.getY();
 
 		float dist = targetVec.getLength();
@@ -399,7 +400,7 @@ HRESULT Update(double deltaTime)
 			offset = targetVec - dir * parentPaddingRadius;
 		}
 		else
-			offset = min(targetVec, dir * g_speed * deltaTime);
+			offset = min(targetVec, dir * float(g_speed * deltaTime));
 		
 		// TODO: Use the pos pointer above
 		// ... then finally, at the verrrry end, stuff our FP floats into 16-bit shorts
