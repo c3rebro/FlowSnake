@@ -1,7 +1,7 @@
-//const uint g_numVerts = 16000;
-//extern Node g_nodes[g_numVerts];
+//const uint g_numNodes = 16000;
+//extern Node g_nodes[g_numNodes];
 //extern bool g_endgame;
-//extern short g_numActiveVerts;
+//extern short g_numActiveNodes;
 //
 //extern float frand();
 //extern HRESULT Update(double deltaTime);
@@ -55,7 +55,7 @@ void testFirstUpdate()
 		
 		// Reset the sim after each pass (always start with seperated nodes)
 		memset(g_nodes, 0, sizeof(g_nodes));
-		for (uint i = 0; i < g_numVerts; i++)
+		for (uint i = 0; i < g_numNodes; i++)
 		{
 			g_nodes[i].position.setX(frand()*2 - 1);
 			g_nodes[i].position.setY(frand()*2 - 1);
@@ -85,15 +85,15 @@ void testSim()
 
 	// Set up our initial state
 	memset(g_nodes, 0, sizeof(g_nodes));
-	for (uint i = 0; i < g_numVerts; i++)
+	for (uint i = 0; i < g_numNodes; i++)
 	{
 		g_nodes[i].position.setX(frand()*2 - 1);
 		g_nodes[i].position.setY(frand()*2 - 1);
 	}
 	
-	g_numActiveVerts = g_numVerts;
+	g_numActiveNodes = g_numNodes;
 	BeginCounter(&simTime);
-	for (i = 0; g_endgame == false && g_numActiveVerts > 1; i++)
+	for (i = 0; g_endgame == false && g_numActiveNodes > 1; i++)
 	{
 		double runningAve = 0.001;
 		
@@ -116,7 +116,7 @@ void testSim()
 
 		if ( i % 1000 == 0)
 		{
-			printf("Num Active Verts: %u\n", g_numActiveVerts);
+			printf("Num Active Verts: %u\n", g_numActiveNodes);
 			printf("Average Update Time: %lf ms\n", runningAve * 1000.0f);
 		}
 	}
@@ -135,7 +135,7 @@ int testMain (int argc, char* argv[])
 {
     QueryPerformanceFrequency(&freqTime);
 	testFirstUpdate();
-	testSim();
+	//testSim();
 
 	return 0;
 }

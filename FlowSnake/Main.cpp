@@ -29,6 +29,8 @@
 
 /********** Function Declarations *****************/
 LRESULT WINAPI MsgHandler(HWND hWnd, uint msg, WPARAM wParam, LPARAM lParam);
+HRESULT EndgameUpdate(double deltaTime);
+HRESULT EndgameInit();
 uint Distance(short2 current, short2 target);
 float SmoothStep(float a, float b, float t);
 void Resize(uint width, uint height);
@@ -57,15 +59,17 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 
 
 /********** Global Constants***********************/
-const uint g_numVerts = 16000;
-const uint g_numSlots = 4000;
-const float g_tailDist = 0.0001f;
-float g_speed = 0.2f; // in Screens per second
+const uint g_numNodes = 16000;	  // Number of nodes (vertices / snake segments) in the scene
+const uint g_numSlots = 8000;	  // Number of slots (indexes to nodes) avaiable for spatial binning
+const float g_tailDist = 0.0001f; // Distance that children will stay from their parents (in 0..1 space)
+float g_speed = 0.2f;			  // in Screens per second
 
 /********** Globals Variables *********************/
 GLuint g_vboPos = 0;
 uint g_width = 1024;
 uint g_height = 768;
+
+short g_numActiveNodes = g_numNodes; // Number of head nodes that are actively seeking tails to chomp
 
 uint g_numBinSplits = 4; // Divide the bins g_numBinSplits times in each dimension. Each bin group is updated periodically.
 uint g_binUpdateIter = 0; // The current bin group to update (incremented every Update())
@@ -79,10 +83,9 @@ float g_binNWidth;  // Bin width in normalized (0..1) space
 float g_binNHeight; // Bin height in normalized (0..1) space
 
 bool g_endgame = false;
-short g_numActiveVerts = g_numVerts;
 
 // Initialize these to nonzero so they go into .DATA and not .BSS (and show in the executable size)
-Node g_nodes[g_numVerts] = {{{0,0,1}, {1,1}}};
+Node g_nodes[g_numNodes] = {{{0,0,1}, {1,1}}};
 
 // 128k total memory. 
 // I think I can pack particle attributes into 6 bytes. (2 shorts for pos, 1 short for target and state)
@@ -125,63 +128,6 @@ inline bool IsValidTarget(short target, short current)
 	return true;
 }
 
-HRESULT EndgameUpdate(double deltaTime)
-{
-	static short* velocityBuf = (short*)g_slots;
-	static const uint numVels = g_numSlots/2;
-	static double absoluteTime = 0;
-	const float timeLimit = 5.0f; // 5 seconds
-
-	absoluteTime += deltaTime;
-
-	for (uint i = 0; i < g_numVerts; i++)
-	{	
-		float velx = velocityBuf[2*(i%numVels)] / MAX_SSHORTF;
-		float vely = velocityBuf[2*(i%numVels)+1] / MAX_SSHORTF;
-
-		velx = SmoothStep(velx, 0.0f, float(absoluteTime)/timeLimit);
-		vely = SmoothStep(vely, 0.0f, float(absoluteTime)/timeLimit);
-
-		g_nodes[i].position.setX(float(g_nodes[i].position.getX() + velx * deltaTime));
-		g_nodes[i].position.setY(float(g_nodes[i].position.getY() + vely * deltaTime));
-	}
-
-	if (absoluteTime > timeLimit)
-	{
-		g_endgame = false;
-		g_numActiveVerts = g_numVerts;
-		absoluteTime = 0;
-
-		for (uint i = 0; i < g_numVerts; i++)
-		{
-			g_nodes[i].attribs.hasChild = false;
-			g_nodes[i].attribs.hasParent = false;
-		}
-	}
-
-	return S_OK;
-}
-
-HRESULT Endgame()
-{
-	static short* velocityBuf = (short*)g_slots;
-	static const uint numVels = g_numSlots/2;
-
-	g_endgame = true;
-
-	//// TODO: Add "shaking" before we explode. The snake should continue
-	////		 to swim along, then start vibrating, then EXPLODE.
-
-	for (uint i = 0; i < numVels; i++)
-	{
-		float maxVelocity = MAX_SSHORTF * 0.5f; // screens per second in signed short space
-		velocityBuf[2*i] = short((frand()*2.0f - 1.0f) * maxVelocity);
-		velocityBuf[2*i+1] = short((frand()*2.0f - 1.0f) * maxVelocity);
-	}
-
-	return S_OK;
-}
-
 // The Node pointed to by node index is in range of it's target
 // If it's still a valid target (no one chomped it this frame) 
 // then join these two segments
@@ -193,7 +139,7 @@ HRESULT Chomp(short nodeIndex)
 	{
 		g_nodes[nodeIndex].attribs.hasParent = true;
 		g_nodes[target].attribs.hasChild = true;
-		--g_numActiveVerts;
+		--g_numActiveNodes;
 	}
 
 	return S_OK;
@@ -247,6 +193,8 @@ HRESULT FindNearestNeighbor(short index)
 	ushort nearest = -1;
 	int bin;
 	do {
+		// Yes, we'll re-iterate over some bins, but the bin rows are stored linearly in memory
+		// So the cache should make this pretty cheap (plus it's only one access since they'll probably be empty)
 		for (int y = yrange[0]; y <= yrange[1]; y++)
 		{
 			for (int x = xrange[0]; x <= xrange[1]; x++)
@@ -292,7 +240,7 @@ HRESULT FindNearestNeighbor(short index)
 	else if (IsValidTarget(g_nodes[index].attribs.targetID, index) == false)
 	{
 		// If our current target is invalid, and we weren't able to find a new one, we'll have to revert to N^2
-		for (uint i = 0; i < g_numVerts; i++)
+		for (uint i = 0; i < g_numNodes; i++)
 		{
 			if (IsValidTarget(i, index))
 			{
@@ -319,15 +267,15 @@ HRESULT Update(double deltaTime)
 		return EndgameUpdate(deltaTime);
 
 	// TODO: Optimize for cache coherency
-	//		 We could attempt to store chains of nodes linearly in memory. That would make the update loop for those chains
-	//		 super fast (since the most chains could probably fit in one cache line). But it would involve a lot of mem moves
-	//		 and could introduce some complexity. Since we're already under 1ms average, I'd say let's not do it.
+	//		 We could attempt to store chains of nodes linearly in memory. That would make the update loop for nodes in those chains
+	//		 super fast (since the most chains could probably fit in one cache line). But it would involve a lot of mem moves and 
+	//		 could introduce some complexity. Since we're already under 1ms average, I'd say let's not do it.
 
 	// Sort into buckets
 	BeginCounter(&binningCounter);
 	{
-		float pixelsPerVert = float((g_width * g_height) / g_numActiveVerts);
-		float binDiameterPixels = sqrtf(pixelsPerVert); // conservative
+		float pixelsPerVert = float((g_width * g_height) / g_numActiveNodes);
+		float binDiameterPixels = sqrt(pixelsPerVert); // conservative
 	
 		g_binNHeight = binDiameterPixels / g_height;
 		g_binNWidth  = binDiameterPixels / g_width;
@@ -345,7 +293,7 @@ HRESULT Update(double deltaTime)
 
 		int bin;
 		memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
-		for (uint i = 0; i < g_numVerts; i++)
+		for (uint i = 0; i < g_numNodes; i++)
 		{
 			if (g_nodes[i].attribs.hasChild == true) continue; // Only bin the chompable tails
 			hr = Bin(g_nodes[i].position.getX(), g_nodes[i].position.getY(), &bin);
@@ -369,14 +317,14 @@ HRESULT Update(double deltaTime)
 
 	// Determine nearest neighbors
 	BeginCounter(&nearestNeighborCounter);
-	for (uint i = 0; i < g_numVerts; i++)
+	for (uint i = 0; i < g_numNodes; i++)
 	{
 		IFC( FindNearestNeighbor(i) );
 	}
 	EndCounter(&nearestNeighborCounter);
 
 	BeginCounter(&positionUpdate);
-	for (uint i = 0; i < g_numVerts; i++)
+	for (uint i = 0; i < g_numNodes; i++)
 	{
 		// Do our memory reads here so we can optimize our access patterns
 		Node& current = g_nodes[i];
@@ -415,10 +363,67 @@ HRESULT Update(double deltaTime)
 	EndCounter(&positionUpdate);
 
 Cleanup:
-	if (g_numActiveVerts == 1)
-		return Endgame();
+	if (g_numActiveNodes == 1)
+		return EndgameInit();
 
 	return hr;
+}
+
+HRESULT EndgameUpdate(double deltaTime)
+{
+	static short* velocityBuf = (short*)g_slots;
+	static const uint numVels = g_numSlots/2;
+	static double absoluteTime = 0;
+	const float timeLimit = 5.0f; // 5 seconds
+
+	absoluteTime += deltaTime;
+
+	for (uint i = 0; i < g_numNodes; i++)
+	{	
+		float velx = velocityBuf[2*(i%numVels)] / MAX_SSHORTF;
+		float vely = velocityBuf[2*(i%numVels)+1] / MAX_SSHORTF;
+
+		velx = SmoothStep(velx, 0.0f, float(absoluteTime)/timeLimit);
+		vely = SmoothStep(vely, 0.0f, float(absoluteTime)/timeLimit);
+
+		g_nodes[i].position.setX(float(g_nodes[i].position.getX() + velx * deltaTime));
+		g_nodes[i].position.setY(float(g_nodes[i].position.getY() + vely * deltaTime));
+	}
+
+	if (absoluteTime > timeLimit)
+	{
+		g_endgame = false;
+		g_numActiveNodes = g_numNodes;
+		absoluteTime = 0;
+
+		for (uint i = 0; i < g_numNodes; i++)
+		{
+			g_nodes[i].attribs.hasChild = false;
+			g_nodes[i].attribs.hasParent = false;
+		}
+	}
+
+	return S_OK;
+}
+
+HRESULT EndgameInit()
+{
+	static short* velocityBuf = (short*)g_slots;
+	static const uint numVels = g_numSlots/2;
+
+	g_endgame = true;
+
+	//// TODO: Add "shaking" before we explode. The snake should continue
+	////		 to swim along, then start vibrating, then EXPLODE.
+
+	for (uint i = 0; i < numVels; i++)
+	{
+		float maxVelocity = MAX_SSHORTF * 0.5f; // screens per second in signed short space
+		velocityBuf[2*i] = short((frand()*2.0f - 1.0f) * maxVelocity);
+		velocityBuf[2*i+1] = short((frand()*2.0f - 1.0f) * maxVelocity);
+	}
+
+	return S_OK;
 }
 
 HRESULT Render()
@@ -429,7 +434,7 @@ HRESULT Render()
 	glBindBuffer(GL_ARRAY_BUFFER, g_vboPos);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(g_nodes), g_nodes, GL_STREAM_DRAW); 
 
-	glDrawArrays(GL_POINTS, 0, g_numVerts);
+	glDrawArrays(GL_POINTS, 0, g_numNodes);
 	return S_OK;
 }
 
@@ -528,7 +533,7 @@ HRESULT Init()
 	glUseProgram(program);
 
 	// Calculate random starting positions
-	for (uint i = 0; i < g_numVerts; i++)
+	for (uint i = 0; i < g_numNodes; i++)
 	{
 		g_nodes[i].position.setX(frand()*2 - 1);
 		g_nodes[i].position.setY(frand()*2 - 1);
