@@ -57,8 +57,8 @@ PFNGLGETSHADERIVPROC glGetShaderiv;
 /********** Global Constants***********************/
 const uint g_numVerts = 16000;
 const uint g_numSlots = 8000;
-const float g_tailDist = 0.0001f;
-const float g_speed = 0.1f; // in Screens per second
+const float g_tailDist = 0.001f;
+const float g_speed = 0.3f; // in Screens per second
 
 /********** Globals Variables *********************/
 GLuint g_vboPos = 0;
@@ -372,7 +372,6 @@ HRESULT Update(double deltaTime)
 	EndCounter(&nearestNeighborCounter);
 
 	// TODO: Organize the nodes of a snake linearly in memory
-	// TODO: Try zipping the attribute and position buffers
 	BeginCounter(&positionUpdate);
 	for (uint i = 0; i < g_numVerts; i++)
 	{
@@ -402,7 +401,6 @@ HRESULT Update(double deltaTime)
 		else
 			offset = min(targetVec, dir * float(g_speed * deltaTime));
 		
-		// TODO: Use the pos pointer above
 		// ... then finally, at the verrrry end, stuff our FP floats into 16-bit shorts
 		current.position.setX(current.position.getX() + offset.x);
 		current.position.setY(current.position.getY() + offset.y);
