@@ -4,6 +4,7 @@
 #include <math.h>  // sqrt
 #include <stdio.h> // _vsnwprintf_s. Can disable for Release
 #include "glext.h" // glGenBuffers, glBindBuffers, ...
+#include "wglext.h"
 #include "Types.h" // float2, short2, Attribs
 
 #ifdef _TEST
@@ -56,12 +57,13 @@ PFNGLDELETESHADERPROC glDeleteShader;
 PFNGLSHADERSOURCEPROC glShaderSource;
 PFNGLCOMPILESHADERPROC glCompileShader;
 PFNGLGETSHADERIVPROC glGetShaderiv;
+PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
 
 /********** Global Constants***********************/
 const uint g_numNodes = 16000;	  // Number of nodes (vertices / snake segments) in the scene
 const uint g_numSlots = 8000;	  // Number of slots (indexes to nodes) avaiable for spatial binning
-const float g_tailDist = 0.0001f; // Distance that children will stay from their parents (in 0..1 space)
+const float g_tailDist = 0.001f; // Distance that children will stay from their parents (in 0..1 space)
 float g_speed = 0.2f;			  // in Screens per second
 
 /********** Globals Variables *********************/
@@ -71,7 +73,7 @@ uint g_height = 768;
 
 short g_numActiveNodes = g_numNodes; // Number of head nodes that are actively seeking tails to chomp
 
-uint g_numBinSplits = 4; // Divide the bins g_numBinSplits times in each dimension. Each bin group is updated periodically.
+uint g_numBinSplits = 2; // Divide the bins g_numBinSplits times in each dimension. Each bin group is updated periodically.
 uint g_binUpdateIter = 0; // The current bin group to update (incremented every Update())
 int g_binRangeX[2]; // The inclusive range of bins (X dimension) that are backed by memory (the active bin group)
 int g_binRangeY[2]; // The inclusive range of bins (Y dimension) that are backed by memory (the active bin group)
@@ -274,54 +276,57 @@ HRESULT Update(double deltaTime)
 	// Sort into buckets
 	BeginCounter(&binningCounter);
 	{
-		float pixelsPerVert = float((g_width * g_height) / g_numActiveNodes);
-		float binDiameterPixels = sqrt(pixelsPerVert); // conservative
-	
-		g_binNHeight = binDiameterPixels / g_height;
-		g_binNWidth  = binDiameterPixels / g_width;
-
-		g_binCountX  = uint(ceilf(1.0f / g_binNWidth) )+2;  // Add a boundary around the outside
-		g_binCountY  = uint(ceilf(1.0f / g_binNHeight))+2;
-
-		uint xiter = g_binUpdateIter % g_numBinSplits;
-		uint yiter = g_binUpdateIter / g_numBinSplits;
-		g_binRangeX[0] = (g_binCountX * xiter/g_numBinSplits)		  - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
-		g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinSplits - 1) + 1;	// This buffer layer will be overlap for each quadrant
-		g_binRangeY[0] = (g_binCountY * yiter/g_numBinSplits)		  - 1;	// But without it verts would only target verts in their quadrant
-		g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinSplits - 1) + 1;
-		g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
-
-		int bin;
-		memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
-		for (uint i = 0; i < g_numNodes; i++)
+		for (g_binUpdateIter = 0; g_binUpdateIter < g_numBinSplits*g_numBinSplits; g_binUpdateIter++)
 		{
-			if (g_nodes[i].attribs.hasChild == true) continue; // Only bin the chompable tails
-			hr = Bin(g_nodes[i].position.getX(), g_nodes[i].position.getY(), &bin);
-			if (FAILED(hr)) // If this bin isn't backed by memory, we can't be a target this frame
-				continue;
+			float pixelsPerVert = float((g_width * g_height) / g_numActiveNodes);
+			float binDiameterPixels = sqrt(pixelsPerVert); // conservative
+	
+			g_binNHeight = binDiameterPixels / g_height;
+			g_binNWidth  = binDiameterPixels / g_width;
 
-			// Find first empty bin slot
-			for (uint slot = 0; slot < g_binStride; slot++) 
+			g_binCountX  = uint(ceilf(1.0f / g_binNWidth) )+2;  // Add a boundary around the outside
+			g_binCountY  = uint(ceilf(1.0f / g_binNHeight))+2;
+
+			uint xiter = g_binUpdateIter % g_numBinSplits;
+			uint yiter = g_binUpdateIter / g_numBinSplits;
+			g_binRangeX[0] = (g_binCountX * xiter/g_numBinSplits)		  - 1;	// Subtract/Add 1 to each of these ranges for a buffer layer
+			g_binRangeX[1] = (g_binCountX * (xiter+1)/g_numBinSplits - 1) + 1;	// This buffer layer will be overlap for each quadrant
+			g_binRangeY[0] = (g_binCountY * yiter/g_numBinSplits)		  - 1;	// But without it verts would only target verts in their quadrant
+			g_binRangeY[1] = (g_binCountY * (yiter+1)/g_numBinSplits - 1) + 1;
+			g_binStride  = g_numSlots / ((g_binRangeX[1] - g_binRangeX[0] + 1) * (g_binRangeY[1] - g_binRangeY[0] + 1));
+
+			int bin;
+			memset(g_slots, EMPTY_SLOT, sizeof(g_slots));
+			for (uint i = 0; i < g_numNodes; i++)
 			{
-				if (g_slots[bin*g_binStride + slot] == EMPTY_SLOT)
+				if (g_nodes[i].attribs.hasChild == true) continue; // Only bin the chompable tails
+				HRESULT hrbin = Bin(g_nodes[i].position.getX(), g_nodes[i].position.getY(), &bin);
+				if (FAILED(hrbin)) // If this bin isn't backed by memory, we can't be a target this frame
+					continue;
+
+				// Find first empty bin slot
+				for (uint slot = 0; slot < g_binStride; slot++) 
 				{
-					g_slots[bin*g_binStride + slot] = i;
-					break;
+					if (g_slots[bin*g_binStride + slot] == EMPTY_SLOT)
+					{
+						g_slots[bin*g_binStride + slot] = i;
+						break;
+					}
+				}
+				// If we overflow the bins, the vertex cannot be targeted. Haven't seen any cases yet...
+			}
+
+			// Determine nearest neighbors
+			for (uint i = 0; i < g_numNodes; i++)
+			{
+				if (S_OK == Bin(g_nodes[i].position.getX(), g_nodes[i].position.getY(), &bin))
+				{
+					FindNearestNeighbor(i);
 				}
 			}
-			// If we overflow the bins, the vertex cannot be targeted. Haven't seen any cases yet...
 		}
-		g_binUpdateIter = (g_binUpdateIter+1) % (g_numBinSplits*g_numBinSplits);
 	}
 	EndCounter(&binningCounter);
-
-	// Determine nearest neighbors
-	BeginCounter(&nearestNeighborCounter);
-	for (uint i = 0; i < g_numNodes; i++)
-	{
-		IFC( FindNearestNeighbor(i) );
-	}
-	EndCounter(&nearestNeighborCounter);
 
 	BeginCounter(&positionUpdate);
 	for (uint i = 0; i < g_numNodes; i++)
@@ -449,7 +454,7 @@ HRESULT CreateProgram(GLuint* program)
 		layout(location = 0) in vec4 position; \
 		void main() \
 		{ \
-			gl_Position = position * 2.0f - 1.0f; \
+		gl_Position = position * vec4(2.0f) - vec4(1.0f); \
 		}";
 
 	const char* pixelShaderString = "\
@@ -527,6 +532,7 @@ HRESULT Init()
 	glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
 	glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
 	glGetShaderiv = (PFNGLGETSHADERIVPROC)wglGetProcAddress("glGetShaderiv");
+	wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress( "wglSwapIntervalEXT" );
 
 	GLuint program;
 	IFC( CreateProgram(&program) );
@@ -538,6 +544,9 @@ HRESULT Init()
 		g_nodes[i].position.setX(frand()*2 - 1);
 		g_nodes[i].position.setY(frand()*2 - 1);
 	}
+
+	// Enable VSync
+	wglSwapIntervalEXT(1);
 
 	// Initialize buffers
 	uint positionSlot = 0;
